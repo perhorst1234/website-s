@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Upload & Curl Generator</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Bestand uploaden</h1>
+      <p>Upload een bestand en kopieer direct het cURL-commando om het terug te downloaden.</p>
+
+      <form id="upload-form">
+        <label class="file-input">
+          <span>Kies een bestand</span>
+          <input type="file" name="file" id="file-input" required />
+        </label>
+        <button type="submit">Uploaden</button>
+      </form>
+
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+
+      <section id="result" class="hidden">
+        <h2>Download informatie</h2>
+        <p>
+          Download link:
+          <a id="download-link" href="#" target="_blank" rel="noopener noreferrer"></a>
+        </p>
+        <div class="curl-output">
+          <label for="curl-command">cURL commando</label>
+          <div class="copy-group">
+            <input id="curl-command" readonly />
+            <button type="button" id="copy-button">Kopieer</button>
+          </div>
+          <p class="copy-feedback" id="copy-feedback"></p>
+        </div>
+      </section>
+    </main>
+
+    <script src="/main.js"></script>
+  </body>
+</html>
