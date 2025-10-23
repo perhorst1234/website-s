@@ -1,43 +1,116 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Upload & Curl Generator</title>
+    <title>Project Management Codex</title>
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
-    <main class="container">
-      <h1>Bestand uploaden</h1>
-      <p>Upload een bestand en kopieer direct het cURL-commando om het terug te downloaden.</p>
+    <header class="app-header">
+      <div class="branding">
+        <h1>Project Management Codex</h1>
+        <p class="tagline">Motivation-first planning for physical and digital makers</p>
+      </div>
+      <div class="header-actions">
+        <button id="theme-toggle" type="button" aria-pressed="true">Toggle light</button>
+        <div class="today-summary" id="today-summary"></div>
+      </div>
+    </header>
 
-      <form id="upload-form">
-        <label class="file-input">
-          <span>Kies een bestand</span>
-          <input type="file" name="file" id="file-input" required />
-        </label>
-        <button type="submit">Uploaden</button>
-      </form>
+    <main class="layout">
+      <aside class="sidebar">
+        <section class="panel">
+          <h2>Create project</h2>
+          <form id="project-form" class="stack">
+            <label>
+              <span>Name</span>
+              <input type="text" name="name" required placeholder="Project codename" />
+            </label>
+            <label>
+              <span>Type</span>
+              <select name="type" required>
+                <option value="general">General</option>
+                <option value="physical">Physical build</option>
+                <option value="digital">Digital release</option>
+              </select>
+            </label>
+            <label>
+              <span>Description</span>
+              <textarea name="description" rows="3" placeholder="Vision, scope, or constraints"></textarea>
+            </label>
+            <label>
+              <span>GitHub repository (optional)</span>
+              <input type="url" name="github" placeholder="https://github.com/user/repo" />
+            </label>
+            <button type="submit">Add project</button>
+          </form>
+        </section>
 
-      <div class="status" id="status" role="status" aria-live="polite"></div>
-
-      <section id="result" class="hidden">
-        <h2>Download informatie</h2>
-        <p>
-          Download link:
-          <a id="download-link" href="#" target="_blank" rel="noopener noreferrer"></a>
-        </p>
-        <div class="curl-output">
-          <label for="curl-command">cURL commando</label>
-          <div class="copy-group">
-            <input id="curl-command" readonly />
-            <button type="button" id="copy-button">Kopieer</button>
+        <section class="panel">
+          <h2>Search &amp; filter</h2>
+          <div class="stack">
+            <label>
+              <span>Search</span>
+              <input type="search" id="search-input" placeholder="Project, task, note, label" />
+            </label>
+            <label>
+              <span>Project type</span>
+              <select id="type-filter">
+                <option value="all">All</option>
+                <option value="general">General</option>
+                <option value="physical">Physical</option>
+                <option value="digital">Digital</option>
+              </select>
+            </label>
+            <label>
+              <span>Task status</span>
+              <select id="status-filter">
+                <option value="all">All</option>
+                <option value="todo">To do</option>
+                <option value="progress">In progress</option>
+                <option value="blocked">Blocked</option>
+                <option value="done">Done</option>
+              </select>
+            </label>
+            <label>
+              <span>Deadline</span>
+              <select id="deadline-filter">
+                <option value="all">All</option>
+                <option value="overdue">Overdue</option>
+                <option value="today">Due today</option>
+                <option value="upcoming">Due soon</option>
+              </select>
+            </label>
           </div>
-          <p class="copy-feedback" id="copy-feedback"></p>
-        </div>
+        </section>
+
+        <section class="panel">
+          <h2>Your projects</h2>
+          <ul id="project-list" class="project-list" aria-live="polite"></ul>
+        </section>
+      </aside>
+
+      <section class="content" id="content">
+        <section class="panel" id="today-view">
+          <div class="panel-header">
+            <h2>Today focus</h2>
+            <p class="muted">Top three items that keep momentum rolling.</p>
+          </div>
+          <ol id="focus-items" class="focus-list"></ol>
+        </section>
+
+        <section class="panel" id="project-detail" aria-live="polite"></section>
       </section>
     </main>
 
-    <script src="/main.js"></script>
+    <template id="project-empty-template">
+      <div class="empty-state">
+        <h2>Select or create a project</h2>
+        <p>Capture phases, iterate on files, and track tangible progress in one Codex.</p>
+      </div>
+    </template>
+
+    <script src="/main.js" type="module"></script>
   </body>
 </html>
