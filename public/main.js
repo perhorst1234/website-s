@@ -267,6 +267,7 @@ const ready = () => {
       if (state.preferences.showChecklist && checklistStats) {
         chips.push(`<span class="chip checklist" title="Checklist">${checklistStats}</span>`);
       }
+    }
 
       card.innerHTML = `
         <header>
@@ -698,6 +699,9 @@ const ready = () => {
       saveAndRender();
       return;
     }
+    selectedProjectId = item.dataset.projectId;
+    saveStateAndRender();
+  });
 
     if (event.target.matches('[data-action="clear-checklist"]')) {
       const confirmClear = confirm('Checklist legen?');
