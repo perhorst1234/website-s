@@ -3,114 +3,90 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Project Management Codex</title>
-    <link rel="stylesheet" href="/style.css" />
+    <title>Project Codex Timeline</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
-    <header class="app-header">
-      <div class="branding">
-        <h1>Project Management Codex</h1>
-        <p class="tagline">Motivation-first planning for physical and digital makers</p>
-      </div>
-      <div class="header-actions">
-        <button id="theme-toggle" type="button" aria-pressed="true">Toggle light</button>
-        <div class="today-summary" id="today-summary"></div>
-      </div>
-    </header>
-
-    <main class="layout">
-      <aside class="sidebar">
-        <section class="panel">
-          <h2>Create project</h2>
-          <form id="project-form" class="stack">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Project selector">
+        <header class="sidebar__header">
+          <div>
+            <h1>Codex Timeline</h1>
+            <p>Een minimalistische motivator voor je projecten.</p>
+          </div>
+          <button id="theme-toggle" class="icon-button" type="button" aria-label="Wissel thema">
+            <span aria-hidden="true">🌙</span>
+          </button>
+        </header>
+        <section class="sidebar__section">
+          <button id="toggle-project-form" class="ghost-button" type="button">
+            + Nieuw project
+          </button>
+          <form id="project-form" class="sidebar-form" hidden>
             <label>
-              <span>Name</span>
-              <input type="text" name="name" required placeholder="Project codename" />
+              <span>Projectnaam</span>
+              <input name="name" placeholder="Mijn droomproject" required />
             </label>
             <label>
               <span>Type</span>
-              <select name="type" required>
-                <option value="general">General</option>
-                <option value="physical">Physical build</option>
-                <option value="digital">Digital release</option>
+              <select name="type">
+                <option value="physical">Fysiek</option>
+                <option value="digital">Digitaal</option>
               </select>
             </label>
             <label>
-              <span>Description</span>
-              <textarea name="description" rows="3" placeholder="Vision, scope, or constraints"></textarea>
+              <span>Omschrijving</span>
+              <textarea name="description" rows="2" placeholder="Waar draait dit project om?"></textarea>
             </label>
-            <label>
-              <span>GitHub repository (optional)</span>
-              <input type="url" name="github" placeholder="https://github.com/user/repo" />
-            </label>
-            <button type="submit">Add project</button>
+            <button type="submit">Project opslaan</button>
           </form>
         </section>
-
-        <section class="panel">
-          <h2>Search &amp; filter</h2>
-          <div class="stack">
-            <label>
-              <span>Search</span>
-              <input type="search" id="search-input" placeholder="Project, task, note, label" />
-            </label>
-            <label>
-              <span>Project type</span>
-              <select id="type-filter">
-                <option value="all">All</option>
-                <option value="general">General</option>
-                <option value="physical">Physical</option>
-                <option value="digital">Digital</option>
-              </select>
-            </label>
-            <label>
-              <span>Task status</span>
-              <select id="status-filter">
-                <option value="all">All</option>
-                <option value="todo">To do</option>
-                <option value="progress">In progress</option>
-                <option value="blocked">Blocked</option>
-                <option value="done">Done</option>
-              </select>
-            </label>
-            <label>
-              <span>Deadline</span>
-              <select id="deadline-filter">
-                <option value="all">All</option>
-                <option value="overdue">Overdue</option>
-                <option value="today">Due today</option>
-                <option value="upcoming">Due soon</option>
-              </select>
-            </label>
-          </div>
-        </section>
-
-        <section class="panel">
-          <h2>Your projects</h2>
-          <ul id="project-list" class="project-list" aria-live="polite"></ul>
+        <section class="sidebar__section">
+          <h2>Projecten</h2>
+          <ul id="project-list" class="project-list" role="list"></ul>
         </section>
       </aside>
-
-      <section class="content" id="content">
-        <section class="panel" id="today-view">
-          <div class="panel-header">
-            <h2>Today focus</h2>
-            <p class="muted">Top three items that keep momentum rolling.</p>
-          </div>
-          <ol id="focus-items" class="focus-list"></ol>
+      <main class="workspace">
+        <section id="empty-state" class="empty-state" hidden>
+          <h2>Start met een project</h2>
+          <p>Maak een project in het menu links om een tijdbalk met fases op te bouwen.</p>
         </section>
-
-        <section class="panel" id="project-detail" aria-live="polite"></section>
-      </section>
-    </main>
-
-    <template id="project-empty-template">
-      <div class="empty-state">
-        <h2>Select or create a project</h2>
-        <p>Capture phases, iterate on files, and track tangible progress in one Codex.</p>
-      </div>
-    </template>
-
-    <script src="/main.js" type="module"></script>
+        <section id="project-workspace" class="project-workspace" hidden>
+          <header class="project-header">
+            <div>
+              <h2 id="project-title"></h2>
+              <p id="project-description" class="muted"></p>
+            </div>
+            <div class="project-controls">
+              <button id="add-phase-btn" type="button">+ Fase toevoegen</button>
+              <div class="view-toggles" role="group" aria-label="Zichtbaarheid">
+                <label><input type="checkbox" data-pref="showNotes" checked /> Notities</label>
+                <label><input type="checkbox" data-pref="showFiles" checked /> Bestanden</label>
+                <label><input type="checkbox" data-pref="showChecklist" checked /> Checklist</label>
+              </div>
+            </div>
+          </header>
+          <div class="layout-grid">
+            <section class="timeline-area" aria-label="Fasering">
+              <div class="timeline-header">
+                <div>
+                  <h3>Tijdbalk</h3>
+                  <p class="muted">Klik op een fase om details te openen of voortgang bij te werken.</p>
+                </div>
+              </div>
+              <ol id="timeline" class="timeline" role="list"></ol>
+            </section>
+            <aside id="phase-detail" class="phase-detail" aria-live="polite"></aside>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="main.js" type="module"></script>
   </body>
 </html>

@@ -1,1429 +1,734 @@
-const STORAGE_KEY = 'pm-codex-state-v1';
-const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
-const FULL_DATE_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
-
-const filters = {
-  search: '',
-  type: 'all',
-  status: 'all',
-  deadline: 'all',
+const STORAGE_KEY = 'codex-timeline-state-v1';
+const DEFAULT_PREFERENCES = {
+  showNotes: true,
+  showFiles: true,
+  showChecklist: true,
+  theme: 'dark',
 };
 
-const defaultState = () => ({
+const COLOR_PALETTE = ['#38bdf8', '#818cf8', '#f472b6', '#22d3ee', '#f97316', '#a855f7'];
+
+const formatDate = (value) => {
+  if (!value) return null;
+  try {
+    return new Intl.DateTimeFormat('nl-NL', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(new Date(value));
+  } catch (error) {
+    return value;
+  }
+};
+
+const escapeHtml = (value = '') => {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
+const formatMultiline = (value = '') => escapeHtml(value).replace(/\n/g, '<br />');
+
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+const uniqueId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const createState = () => ({
   projects: [],
+  preferences: { ...DEFAULT_PREFERENCES },
   selectedProjectId: null,
+  selectedPhaseId: null,
 });
 
+const normalizeStateShape = (rawState) => {
+  const state = { ...rawState };
+  state.projects = (state.projects || []).map((project, projectIndex) => {
+    const phases = Array.isArray(project.phases) ? project.phases : [];
+    return {
+      id: project.id || uniqueId(),
+      name: String(project.name || `Project ${projectIndex + 1}`),
+      type: project.type === 'physical' ? 'physical' : 'digital',
+      description: String(project.description || ''),
+      createdAt: project.createdAt || new Date().toISOString(),
+      phases: phases.map((phase, phaseIndex) => {
+        const notes = Array.isArray(phase.notes) ? phase.notes : [];
+        const files = Array.isArray(phase.files) ? phase.files : [];
+        const checklist = Array.isArray(phase.checklist) ? phase.checklist : [];
+        return {
+          id: phase.id || uniqueId(),
+          name: String(phase.name || `Nieuwe fase ${phaseIndex + 1}`),
+          description: String(phase.description || ''),
+          startDate: phase.startDate || '',
+          endDate: phase.endDate || '',
+          progress: clamp(Number(phase.progress) || 0, 0, 100),
+          color: phase.color || COLOR_PALETTE[phaseIndex % COLOR_PALETTE.length],
+          notes: notes.map((note) => ({
+            id: note.id || uniqueId(),
+            title: String(note.title || ''),
+            content: String(note.content || ''),
+            createdAt: note.createdAt || new Date().toISOString(),
+          })),
+          files: files.map((file) => ({
+            id: file.id || uniqueId(),
+            name: String(file.name || ''),
+            link: String(file.link || ''),
+            note: String(file.note || ''),
+            createdAt: file.createdAt || new Date().toISOString(),
+          })),
+          checklist: checklist.map((item) => ({
+            id: item.id || uniqueId(),
+            text: String(item.text || ''),
+            done: Boolean(item.done),
+          })),
+          createdAt: phase.createdAt || new Date().toISOString(),
+        };
+      }),
+    };
+  });
+  return state;
+};
+
+const loadState = () => {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (!stored) return createState();
+  try {
+    const parsed = JSON.parse(stored);
+    return {
+      ...createState(),
+      ...parsed,
+      preferences: { ...DEFAULT_PREFERENCES, ...(parsed?.preferences || {}) },
+    };
+  } catch (error) {
+    console.warn('Kon opgeslagen staat niet lezen, begin vers.', error);
+    return createState();
+  }
+};
+
 const ready = () => {
-  const projectForm = document.getElementById('project-form');
+  const root = document.documentElement;
   const projectListEl = document.getElementById('project-list');
-  const projectDetailEl = document.getElementById('project-detail');
-  const focusListEl = document.getElementById('focus-items');
-  const todaySummaryEl = document.getElementById('today-summary');
-  const searchInput = document.getElementById('search-input');
-  const statusFilter = document.getElementById('status-filter');
-  const deadlineFilter = document.getElementById('deadline-filter');
-  const typeFilter = document.getElementById('type-filter');
+  const projectForm = document.getElementById('project-form');
+  const toggleProjectFormButton = document.getElementById('toggle-project-form');
+  const emptyState = document.getElementById('empty-state');
+  const projectWorkspace = document.getElementById('project-workspace');
+  const projectTitle = document.getElementById('project-title');
+  const projectDescription = document.getElementById('project-description');
+  const addPhaseButton = document.getElementById('add-phase-btn');
+  const timelineEl = document.getElementById('timeline');
+  const phaseDetailEl = document.getElementById('phase-detail');
   const themeToggle = document.getElementById('theme-toggle');
-  const emptyTemplate = document.getElementById('project-empty-template');
+  const viewToggleInputs = document.querySelectorAll('.view-toggles input[type="checkbox"]');
 
-  let state = loadState();
-  let selectedProjectId = state.selectedProjectId || (state.projects[0]?.id ?? null);
+  let state = normalizeStateShape(loadState());
 
-  function loadProject(projectId) {
-    return state.projects.find((project) => project.id === projectId) || null;
-  }
-
-  function saveStateAndRender() {
-    state.selectedProjectId = selectedProjectId;
+  const saveState = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    renderAll();
-  }
+  };
 
-  function renderAll() {
-    renderProjectList();
-    renderProjectDetail();
-    renderFocusView();
-    renderTodaySummary();
-  }
+  const saveAndRender = () => {
+    ensureSelections();
+    saveState();
+    render();
+  };
 
-  function renderProjectList() {
-    projectListEl.innerHTML = '';
-    const filtered = state.projects.filter(projectMatchesFilters);
+  const getProject = (projectId) => state.projects.find((project) => project.id === projectId) || null;
 
-    if (!filtered.length) {
-      const emptyItem = document.createElement('li');
-      emptyItem.className = 'muted';
-      emptyItem.textContent = 'No projects found. Adjust your filters or create a new project.';
-      projectListEl.appendChild(emptyItem);
+  const getSelectedProject = () => getProject(state.selectedProjectId);
+
+  const getSelectedPhase = () => {
+    const project = getSelectedProject();
+    if (!project) return null;
+    return project.phases.find((phase) => phase.id === state.selectedPhaseId) || null;
+  };
+
+  const ensureSelections = () => {
+    if (!state.projects.length) {
+      state.selectedProjectId = null;
+      state.selectedPhaseId = null;
       return;
     }
-
-    filtered.sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
-
-    filtered.forEach((project) => {
-      const li = document.createElement('li');
-      li.className = `project-item${project.id === selectedProjectId ? ' active' : ''}`;
-      li.dataset.projectId = project.id;
-
-      const { progress, totalTasks, openTasks } = projectProgress(project);
-      const overdueCount = countOverdueTasks(project);
-
-      li.innerHTML = `
-        <div class="project-title">${escapeHtml(project.name)}</div>
-        <div class="project-meta">
-          <span>${project.type.charAt(0).toUpperCase()}${project.type.slice(1)}</span>
-          <span>${totalTasks} tasks • ${project.phases.length} phases</span>
-        </div>
-        <div class="project-meta">
-          <span>${openTasks} active • ${overdueCount} overdue</span>
-          <span>${progress}% progress</span>
-        </div>
-        <div class="progress-bar"><span style="width:${progress}%"></span></div>
-      `;
-
-      projectListEl.appendChild(li);
-    });
-  }
-
-  function renderProjectDetail() {
-    const project = loadProject(selectedProjectId);
+    const project = getSelectedProject();
     if (!project) {
-      projectDetailEl.innerHTML = emptyTemplate.innerHTML;
+      state.selectedProjectId = state.projects[0].id;
+    }
+    const currentProject = getSelectedProject();
+    if (!currentProject) {
+      state.selectedPhaseId = null;
       return;
     }
-
-    normalizeProject(project);
-
-    const progressInfo = projectProgress(project);
-
-    projectDetailEl.innerHTML = `
-      <article class="project-overview">
-        <header class="panel-header">
-          <div>
-            <h2>${escapeHtml(project.name)}</h2>
-            <p class="muted">${escapeHtml(project.description || 'No description yet.')} </p>
-            <div class="tag-group">
-              <span class="tag">${escapeHtml(capitalize(project.type))} project</span>
-              <span class="tag">${project.phases.length} phases</span>
-              <span class="tag">${progressInfo.progress}% overall progress</span>
-            </div>
-          </div>
-          <div class="project-actions">
-            ${project.github ? `<a class="tag" href="${escapeAttribute(project.github)}" target="_blank" rel="noopener noreferrer">GitHub connected</a>` : '<span class="tag">GitHub not linked</span>'}
-            <label class="tag">
-              <input type="checkbox" data-action="toggle-share" ${project.share?.enabled ? 'checked' : ''} />
-              Share via read-only link
-            </label>
-            ${project.share?.enabled ? `<a class="read-only-link" href="${escapeAttribute(shareUrl(project))}" target="_blank" rel="noopener noreferrer">${escapeHtml(shareUrl(project))}</a>` : '<p class="muted">Private by default. Enable sharing to generate a link.</p>'}
-          </div>
-        </header>
-        <section class="split-grid">
-          <div class="focus-card">
-            <strong>Momentum</strong>
-            <div class="progress-bar"><span style="width:${progressInfo.progress}%"></span></div>
-            <p class="status">${progressInfo.progress}% avg phase completion</p>
-          </div>
-          <div class="focus-card">
-            <strong>Active tasks</strong>
-            <p class="status">${progressInfo.openTasks} of ${progressInfo.totalTasks} open</p>
-            <p class="status">${countOverdueTasks(project)} overdue • ${countDueToday(project)} due today</p>
-          </div>
-          <div class="focus-card">
-            <strong>Phase coverage</strong>
-            <p class="status">${project.phases.filter((phase) => phase.tasks.length > 0).length} phases with tasks</p>
-            <p class="status">${project.notes.length} linked notes • ${project.files.length} files</p>
-          </div>
-        </section>
-      </article>
-
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>Phases &amp; tasks</h3>
-          <p class="muted">Track phases, attach tasks, and steer progress manually.</p>
-        </header>
-        ${renderAddPhaseForm(project)}
-        <div class="split-grid">
-          ${project.phases.map((phase) => renderPhaseCard(project, phase)).join('') || '<p class="muted">Add a phase to start planning your roadmap.</p>'}
-        </div>
-      </section>
-
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>File library</h3>
-          <p class="muted">Store markdown, notes, code snippets, or embed reference files and images.</p>
-        </header>
-        ${renderAddFileForm(project)}
-        <div class="split-grid">
-          ${project.files.map((file) => renderFileCard(project, file)).join('') || '<p class="muted">No files yet. Capture your research, BOM spreadsheets, or reference docs.</p>'}
-        </div>
-      </section>
-
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>Notes &amp; timeline</h3>
-          <p class="muted">Log learnings, decisions, and link them to phases.</p>
-        </header>
-        ${renderAddNoteForm(project)}
-        <div class="split-grid">
-          ${project.notes.map((note) => renderNoteCard(project, note)).join('') || '<p class="muted">Capture the narrative behind your build or launch.</p>'}
-        </div>
-      </section>
-
-      ${project.type === 'physical' ? renderPhysicalSections(project) : ''}
-      ${project.type === 'digital' ? renderDigitalSections(project) : ''}
-    `;
-  }
-
-  function renderAddPhaseForm(project) {
-    return `
-      <form class="form-inline" data-action="add-phase">
-        <label>
-          <span>Phase name</span>
-          <input name="name" required placeholder="e.g. Ideation" />
-        </label>
-        <label>
-          <span>Priority</span>
-          <select name="priority">
-            <option value="high">High</option>
-            <option value="medium" selected>Medium</option>
-            <option value="low">Low</option>
-          </select>
-        </label>
-        <label>
-          <span>Deadline</span>
-          <input type="date" name="deadline" />
-        </label>
-        <button type="submit">Add phase</button>
-      </form>
-    `;
-  }
-
-  function renderPhaseCard(project, phase) {
-    const autoProgress = phase.tasks.length
-      ? Math.round((phase.tasks.filter((task) => task.status === 'done').length / phase.tasks.length) * 100)
-      : 0;
-    const manualProgress = typeof phase.manualProgress === 'number' ? phase.manualProgress : autoProgress;
-    const manualLabel = manualProgress ?? 0;
-    const autoLabel = autoProgress;
-    const deadlineInfo = deadlineLabel(phase.deadline);
-    const filteredTasks = phase.tasks.filter((task) => taskMatchesFilters(task));
-
-    return `
-      <article class="phase-card" data-phase-id="${phase.id}">
-        <header class="phase-header">
-          <div>
-            <h3>${escapeHtml(phase.name)}</h3>
-            <div class="tag-group">
-              <span class="badge ${phase.priority}">${capitalize(phase.priority)}</span>
-              ${phase.deadline ? `<span class="badge ${deadlineInfo.status}">Due ${escapeHtml(deadlineInfo.label)}</span>` : ''}
-            </div>
-          </div>
-          <div class="stack" style="min-width:160px;">
-            <label>
-              <span>Manual progress: <strong data-phase-progress="${phase.id}">${manualLabel}</strong>%</span>
-              <input type="range" min="0" max="100" step="5" value="${manualProgress}" data-action="phase-progress" data-phase-id="${phase.id}" />
-            </label>
-            <small class="muted">Auto: ${autoLabel}% complete</small>
-          </div>
-        </header>
-
-        <section class="tasks">
-          ${filteredTasks.map((task) => renderTaskItem(project, phase, task)).join('') || '<p class="muted">No tasks match the current filters.</p>'}
-        </section>
-
-        <form class="stack" data-action="add-task" data-phase-id="${phase.id}">
-          <fieldset>
-            <legend>Add task</legend>
-            <div class="form-inline">
-              <label>
-                <span>Task</span>
-                <input name="title" required placeholder="Define the next meaningful step" />
-              </label>
-              <label>
-                <span>Label</span>
-                <input name="label" placeholder="Prototype, QA, etc." />
-              </label>
-              <label>
-                <span>Priority</span>
-                <select name="priority">
-                  <option value="high">High</option>
-                  <option value="medium" selected>Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </label>
-              <label>
-                <span>Due date</span>
-                <input type="date" name="dueDate" />
-              </label>
-            </div>
-            <label>
-              <span>Notes</span>
-              <textarea name="notes" rows="2" placeholder="Context, blockers, resources"></textarea>
-            </label>
-          </fieldset>
-          <button type="submit">Add task</button>
-        </form>
-      </article>
-    `;
-  }
-
-  function renderTaskItem(project, phase, task) {
-    const dueInfo = deadlineLabel(task.dueDate);
-    const progress = typeof task.percentComplete === 'number' ? task.percentComplete : task.status === 'done' ? 100 : 0;
-
-    return `
-      <div class="task-item" data-task-id="${task.id}" data-phase-id="${phase.id}" data-project-id="${project.id}">
-        <div class="task-main">
-          <strong>${escapeHtml(task.title)}</strong>
-          <div class="task-meta">
-            ${task.label ? `<span class="tag">${escapeHtml(task.label)}</span>` : ''}
-            <span class="tag ${task.priority}">${capitalize(task.priority)}</span>
-            ${task.dueDate ? `<span class="deadline ${dueInfo.status}">Due ${escapeHtml(dueInfo.label)}</span>` : '<span class="muted">No deadline</span>'}
-          </div>
-          ${task.notes ? `<p class="muted">${escapeHtml(task.notes)}</p>` : ''}
-        </div>
-        <label class="stack">
-          <span>Status</span>
-          <select data-action="task-status" data-task-id="${task.id}" data-phase-id="${phase.id}">
-            ${['todo', 'progress', 'blocked', 'done']
-              .map((value) => `<option value="${value}" ${task.status === value ? 'selected' : ''}>${statusLabel(value)}</option>`)
-              .join('')}
-          </select>
-        </label>
-        <div class="stack">
-          <label>
-            <span>Progress: <strong data-task-progress="${task.id}">${progress}</strong>%</span>
-            <input type="range" min="0" max="100" step="5" value="${progress}" data-action="task-progress" data-task-id="${task.id}" data-phase-id="${phase.id}" />
-          </label>
-          <button type="button" class="secondary" data-action="toggle-focus" data-task-id="${task.id}" data-phase-id="${phase.id}">${task.focus ? 'Unpin from Today' : 'Pin to Today'}</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderAddFileForm(project) {
-    return `
-      <form class="stack" data-action="add-file">
-        <div class="form-inline">
-          <label>
-            <span>Title</span>
-            <input name="title" required placeholder="Name or purpose" />
-          </label>
-          <label>
-            <span>Type</span>
-            <select name="type">
-              <option value="markdown">Markdown</option>
-              <option value="text">Text note</option>
-              <option value="code">Code snippet</option>
-              <option value="image">Image</option>
-              <option value="binary">Upload file</option>
-            </select>
-          </label>
-          <label>
-            <span>Link to phase</span>
-            <select name="phaseId">
-              <option value="">Unlinked</option>
-              ${project.phases.map((phase) => `<option value="${phase.id}">${escapeHtml(phase.name)}</option>`).join('')}
-            </select>
-          </label>
-        </div>
-        <label>
-          <span>Content (Markdown / text / code)</span>
-          <textarea class="editor" name="content" placeholder="Write or paste your content"></textarea>
-        </label>
-        <label>
-          <span>Attach file (optional)</span>
-          <input type="file" name="fileData" />
-        </label>
-        <button type="submit">Add file</button>
-      </form>
-    `;
-  }
-
-  function renderFileCard(project, file) {
-    const phaseName = project.phases.find((phase) => phase.id === file.phaseId)?.name;
-    const updatedLabel = file.updatedAt ? FULL_DATE_FORMAT.format(new Date(file.updatedAt)) : 'N/A';
-    const versions = file.versions
-      .map((version) => `<li>${FULL_DATE_FORMAT.format(new Date(version.timestamp))}</li>`)
-      .join('');
-    let body = '';
-
-    if (['markdown', 'text', 'code'].includes(file.type)) {
-      body = `
-        <textarea class="editor" data-file-editor="${file.id}">${escapeHtml(file.content || '')}</textarea>
-        <div class="file-actions">
-          <button type="button" data-action="save-file" data-file-id="${file.id}">Save version</button>
-        </div>
-      `;
-    } else if (file.type === 'image') {
-      body = file.content
-        ? `<img src="${escapeAttribute(file.content)}" alt="${escapeAttribute(file.title)}" style="width:100%;border-radius:12px;object-fit:cover;" />`
-        : '<p class="muted">No image uploaded yet.</p>';
-    } else {
-      body = file.content
-        ? `<a class="tag" href="${escapeAttribute(file.content)}" download="${escapeAttribute(file.metadata?.originalName || file.title)}">Download</a>`
-        : '<p class="muted">Upload a file to generate a download link.</p>';
+    if (!currentProject.phases.length) {
+      state.selectedPhaseId = null;
+    } else if (!currentProject.phases.some((phase) => phase.id === state.selectedPhaseId)) {
+      state.selectedPhaseId = currentProject.phases[0].id;
     }
+  };
 
-    return `
-      <article class="file-card" data-file-id="${file.id}">
-        <header class="phase-header">
-          <div>
-            <h3>${escapeHtml(file.title)}</h3>
-            <div class="task-meta">
-              <span class="tag">${capitalize(file.type)}</span>
-              ${phaseName ? `<span class="tag">Linked: ${escapeHtml(phaseName)}</span>` : ''}
-            </div>
-          </div>
-          <p class="muted">Updated ${escapeHtml(updatedLabel)}</p>
-        </header>
-        ${body}
-        ${versions ? `<details class="version-history"><summary>Version history (${file.versions.length})</summary><ul>${versions}</ul></details>` : '<p class="muted">Version history is empty. Save to capture revisions.</p>'}
-      </article>
-    `;
-  }
-  function renderAddNoteForm(project) {
-    return `
-      <form class="stack" data-action="add-note">
-        <div class="form-inline">
-          <label>
-            <span>Title</span>
-            <input name="title" required placeholder="Decision, insight, or meeting" />
-          </label>
-          <label>
-            <span>Link phase</span>
-            <select name="phaseId">
-              <option value="">Unlinked</option>
-              ${project.phases.map((phase) => `<option value="${phase.id}">${escapeHtml(phase.name)}</option>`).join('')}
-            </select>
-          </label>
-          <label>
-            <span>Timeline date</span>
-            <input type="date" name="timelineDate" />
-          </label>
-        </div>
-        <textarea class="editor" name="content" required placeholder="Write in Markdown, capture retro notes, or log progress."></textarea>
-        <button type="submit">Add note</button>
-      </form>
-    `;
-  }
+  const applyTheme = () => {
+    root.classList.toggle('light', state.preferences.theme === 'light');
+    themeToggle.innerHTML = state.preferences.theme === 'light' ? '<span aria-hidden="true">🌞</span>' : '<span aria-hidden="true">🌙</span>';
+    themeToggle.setAttribute('aria-label', state.preferences.theme === 'light' ? 'Schakel naar donker thema' : 'Schakel naar licht thema');
+  };
 
-  function renderNoteCard(project, note) {
-    const phaseName = project.phases.find((phase) => phase.id === note.phaseId)?.name;
-    const versions = note.versions
-      .map((version) => `<li>${FULL_DATE_FORMAT.format(new Date(version.timestamp))}</li>`)
-      .join('');
+  const createPhase = (index = 0) => ({
+    id: uniqueId(),
+    name: `Nieuwe fase ${index + 1}`,
+    description: '',
+    startDate: '',
+    endDate: '',
+    progress: 0,
+    color: COLOR_PALETTE[index % COLOR_PALETTE.length],
+    notes: [],
+    files: [],
+    checklist: [],
+    createdAt: new Date().toISOString(),
+  });
 
-    return `
-      <article class="note-card" data-note-id="${note.id}">
-        <header class="phase-header">
-          <div>
-            <h3>${escapeHtml(note.title)}</h3>
-            <div class="task-meta">
-              ${phaseName ? `<span class="tag">Phase: ${escapeHtml(phaseName)}</span>` : ''}
-              ${note.timelineDate ? `<span class="tag">${escapeHtml(FULL_DATE_FORMAT.format(new Date(note.timelineDate)))}</span>` : ''}
-            </div>
-          </div>
-          <p class="muted">Updated ${note.updatedAt ? escapeHtml(FULL_DATE_FORMAT.format(new Date(note.updatedAt))) : 'N/A'}</p>
-        </header>
-        <textarea class="editor" data-note-editor="${note.id}">${escapeHtml(note.content || '')}</textarea>
-        <div class="note-actions">
-          <button type="button" data-action="save-note" data-note-id="${note.id}">Save version</button>
-        </div>
-        ${versions ? `<details class="version-history"><summary>Version history (${note.versions.length})</summary><ul>${versions}</ul></details>` : '<p class="muted">Version history is empty. Save to capture revisions.</p>'}
-      </article>
-    `;
-  }
-
-  function renderPhysicalSections(project) {
-    return `
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>Bill of Materials</h3>
-          <p class="muted">Track components, suppliers, and spend.</p>
-        </header>
-        <form class="form-inline" data-action="add-bom">
-          <label>
-            <span>Part</span>
-            <input name="item" required placeholder="Component name" />
-          </label>
-          <label>
-            <span>Supplier</span>
-            <input name="supplier" placeholder="Supplier or store" />
-          </label>
-          <label>
-            <span>Cost</span>
-            <input name="cost" type="number" min="0" step="0.01" placeholder="0.00" />
-          </label>
-          <label>
-            <span>Status</span>
-            <select name="status">
-              <option value="needed">Needed</option>
-              <option value="ordered">Ordered</option>
-              <option value="received">Received</option>
-            </select>
-          </label>
-          <button type="submit">Add line</button>
-        </form>
-        <div class="table-like">
-          ${project.bom.map((item) => `
-            <div class="bom-row" data-bom-id="${item.id}">
-              <strong>${escapeHtml(item.item)}</strong>
-              <span class="muted">Supplier: ${escapeHtml(item.supplier || 'n/a')}</span>
-              <span class="muted">Cost: €${Number(item.cost || 0).toFixed(2)}</span>
-              <label>
-                <span>Status</span>
-                <select data-action="bom-status" data-bom-id="${item.id}">
-                  ${['needed', 'ordered', 'received']
-                    .map((value) => `<option value="${value}" ${item.status === value ? 'selected' : ''}>${capitalize(value)}</option>`)
-                    .join('')}
-                </select>
-              </label>
-            </div>
-          `).join('') || '<p class="muted">No BOM entries yet.</p>'}
-        </div>
-      </section>
-
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>Photo logbook</h3>
-          <p class="muted">Document your build steps.</p>
-        </header>
-        <form class="stack" data-action="add-logbook">
-          <div class="form-inline">
-            <label>
-              <span>Title</span>
-              <input name="title" required placeholder="Assembly step" />
-            </label>
-            <label>
-              <span>Date</span>
-              <input type="date" name="date" />
-            </label>
-            <label>
-              <span>Image URL</span>
-              <input name="image" type="url" placeholder="https://" />
-            </label>
-          </div>
-          <textarea name="notes" rows="3" placeholder="What changed, insights, or adjustments"></textarea>
-          <button type="submit">Add entry</button>
-        </form>
-        <div class="split-grid">
-          ${project.logbook.map((entry) => `
-            <article class="logbook-card" data-log-id="${entry.id}">
-              <h3>${escapeHtml(entry.title)}</h3>
-              ${entry.date ? `<p class="muted">${escapeHtml(FULL_DATE_FORMAT.format(new Date(entry.date)))}</p>` : ''}
-              ${entry.image ? `<img src="${escapeAttribute(entry.image)}" alt="${escapeAttribute(entry.title)}" style="width:100%;border-radius:12px;object-fit:cover;" />` : ''}
-              ${entry.notes ? `<p>${escapeHtml(entry.notes)}</p>` : ''}
-            </article>
-          `).join('') || '<p class="muted">Add photos or quick logs to build your timeline.</p>'}
-        </div>
-      </section>
-
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>Refine / Tune checklist</h3>
-          <p class="muted">Keep repeatable QA steps handy.</p>
-        </header>
-        <form class="form-inline" data-action="add-checklist-item">
-          <label>
-            <span>Checklist item</span>
-            <input name="label" required placeholder="Test motor alignment" />
-          </label>
-          <button type="submit">Add</button>
-        </form>
-        <div class="checklist">
-          ${project.checklist.map((item) => `
-            <label>
-              <input type="checkbox" ${item.done ? 'checked' : ''} data-action="toggle-checklist" data-checklist-id="${item.id}" />
-              <span>${escapeHtml(item.label)}</span>
-            </label>
-          `).join('') || '<p class="muted">Create your QA checklist for future passes.</p>'}
-        </div>
-      </section>
-    `;
-  }
-
-  function renderDigitalSections(project) {
-    return `
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>Releases &amp; milestones</h3>
-          <p class="muted">Track releases, milestones, and their readiness.</p>
-        </header>
-        <form class="form-inline" data-action="add-release">
-          <label>
-            <span>Name</span>
-            <input name="name" required placeholder="v1.0 Alpha" />
-          </label>
-          <label>
-            <span>Target date</span>
-            <input type="date" name="targetDate" />
-          </label>
-          <label>
-            <span>Status</span>
-            <select name="status">
-              <option value="planning">Planning</option>
-              <option value="building">Building</option>
-              <option value="review">In review</option>
-              <option value="shipped">Shipped</option>
-            </select>
-          </label>
-          <button type="submit">Add milestone</button>
-        </form>
-        <div class="split-grid">
-          ${project.releases.map((release) => `
-            <article class="release-card" data-release-id="${release.id}">
-              <h3>${escapeHtml(release.name)}</h3>
-              <p class="muted">${release.targetDate ? `Target ${escapeHtml(FULL_DATE_FORMAT.format(new Date(release.targetDate)))}` : 'No target date'}</p>
-              <label>
-                <span>Status</span>
-                <select data-action="release-status" data-release-id="${release.id}">
-                  ${['planning', 'building', 'review', 'shipped']
-                    .map((value) => `<option value="${value}" ${release.status === value ? 'selected' : ''}>${capitalize(value)}</option>`)
-                    .join('')}
-                </select>
-              </label>
-              ${release.description ? `<p>${escapeHtml(release.description)}</p>` : ''}
-            </article>
-          `).join('') || '<p class="muted">Outline upcoming releases to maintain momentum.</p>'}
-        </div>
-      </section>
-
-      <section class="project-section">
-        <header class="panel-header">
-          <h3>Issue-like tasks</h3>
-          <p class="muted">Capture bugs, features, and chores alongside your roadmap.</p>
-        </header>
-        <form class="stack" data-action="add-issue">
-          <div class="form-inline">
-            <label>
-              <span>Title</span>
-              <input name="title" required placeholder="Describe the issue" />
-            </label>
-            <label>
-              <span>Type</span>
-              <select name="issueType">
-                <option value="bug">Bug</option>
-                <option value="feature">Feature</option>
-                <option value="chore">Chore</option>
-              </select>
-            </label>
-            <label>
-              <span>Status</span>
-              <select name="status">
-                <option value="todo">To do</option>
-                <option value="progress">In progress</option>
-                <option value="blocked">Blocked</option>
-                <option value="done">Done</option>
-              </select>
-            </label>
-            <label>
-              <span>Due date</span>
-              <input type="date" name="dueDate" />
-            </label>
-          </div>
-          <textarea name="notes" rows="2" placeholder="Context or acceptance criteria"></textarea>
-          <button type="submit">Add issue</button>
-        </form>
-        <div class="split-grid">
-          ${project.issues.map((issue) => `
-            <article class="issue-card" data-issue-id="${issue.id}">
-              <h3>${escapeHtml(issue.title)}</h3>
-              <div class="task-meta">
-                <span class="tag">${capitalize(issue.issueType)}</span>
-                <span class="tag">${statusLabel(issue.status)}</span>
-                ${issue.dueDate ? `<span class="tag ${deadlineLabel(issue.dueDate).status}">Due ${escapeHtml(deadlineLabel(issue.dueDate).label)}</span>` : ''}
-              </div>
-              ${issue.notes ? `<p>${escapeHtml(issue.notes)}</p>` : ''}
-              <label>
-                <span>Status</span>
-                <select data-action="issue-status" data-issue-id="${issue.id}">
-                  ${['todo', 'progress', 'blocked', 'done']
-                    .map((value) => `<option value="${value}" ${issue.status === value ? 'selected' : ''}>${statusLabel(value)}</option>`)
-                    .join('')}
-                </select>
-              </label>
-            </article>
-          `).join('') || '<p class="muted">Track bugs, features, and chores to complement your phase tasks.</p>'}
-        </div>
-      </section>
-    `;
-  }
-
-  function renderFocusView() {
-    const focusItems = computeFocusItems().slice(0, 3);
-    focusListEl.innerHTML = '';
-
-    if (!focusItems.length) {
+  const renderProjects = () => {
+    projectListEl.innerHTML = '';
+    if (!state.projects.length) {
       const empty = document.createElement('li');
       empty.className = 'muted';
-      empty.textContent = 'No focus items yet. Pin a task or add due dates to surface priorities here.';
-      focusListEl.appendChild(empty);
+      empty.textContent = 'Nog geen projecten. Voeg er een toe!';
+      projectListEl.appendChild(empty);
+      return;
+    }
+    state.projects.forEach((project) => {
+      const item = document.createElement('li');
+      item.className = `project-item${project.id === state.selectedProjectId ? ' active' : ''}`;
+      item.dataset.projectId = project.id;
+      const phaseCount = project.phases.length;
+      const progress =
+        phaseCount === 0
+          ? 0
+          : Math.round(
+              project.phases.reduce((total, phase) => total + clamp(Number(phase.progress) || 0, 0, 100), 0) /
+                phaseCount
+            );
+
+      item.innerHTML = `
+        <h3>${escapeHtml(project.name)}</h3>
+        <span>${phaseCount} fases • ${project.type === 'physical' ? 'Fysiek' : 'Digitaal'}</span>
+        <span>Gem. voortgang ${progress}%</span>
+      `;
+
+      projectListEl.appendChild(item);
+    });
+  };
+
+  const renderTimeline = (project) => {
+    timelineEl.innerHTML = '';
+    if (!project.phases.length) {
+      const empty = document.createElement('li');
+      empty.className = 'muted';
+      empty.innerHTML =
+        'Nog geen fases. Klik op “Fase toevoegen” om de tijdbalk te starten.';
+      timelineEl.appendChild(empty);
       return;
     }
 
-    focusItems.forEach((item) => {
-      const li = document.createElement('li');
-      li.className = 'focus-card';
-      li.innerHTML = `
-        <strong>${escapeHtml(item.title)}</strong>
-        <p class="status">${escapeHtml(item.subtitle)}</p>
-        <p class="status">${escapeHtml(item.detail)}</p>
+    project.phases.forEach((phase, index) => {
+      const listItem = document.createElement('li');
+      listItem.className = 'timeline-phase';
+
+      const marker = document.createElement('span');
+      marker.className = 'timeline-marker';
+      marker.style.background = phase.color || COLOR_PALETTE[index % COLOR_PALETTE.length];
+      listItem.appendChild(marker);
+
+      const card = document.createElement('article');
+      card.className = `timeline-card${phase.id === state.selectedPhaseId ? ' active' : ''}`;
+      card.dataset.phaseId = phase.id;
+
+      const start = formatDate(phase.startDate);
+      const end = formatDate(phase.endDate);
+      const checklistStats = phase.checklist.length
+        ? `${phase.checklist.filter((item) => item.done).length}/${phase.checklist.length} stappen`
+        : null;
+
+      const chips = [];
+      if (state.preferences.showNotes && phase.notes.length) {
+        chips.push(
+          `<span class="chip note" title="Notities">${phase.notes.length} notitie${phase.notes.length === 1 ? '' : 's'}</span>`
+        );
+      }
+      if (state.preferences.showFiles && phase.files.length) {
+        chips.push(
+          `<span class="chip file" title="Bestanden">${phase.files.length} bestand${phase.files.length === 1 ? '' : 'en'}</span>`
+        );
+      }
+      if (state.preferences.showChecklist && checklistStats) {
+        chips.push(`<span class="chip checklist" title="Checklist">${checklistStats}</span>`);
+      }
+    }
+
+      card.innerHTML = `
+        <header>
+          <div>
+            <h4>${escapeHtml(phase.name)}</h4>
+            <div class="timeline-meta">
+              ${start ? `<span>Start: ${escapeHtml(start)}</span>` : ''}
+              ${end ? `<span>Eind: ${escapeHtml(end)}</span>` : ''}
+            </div>
+          </div>
+          <span class="progress-chip">${clamp(Number(phase.progress) || 0, 0, 100)}%</span>
+        </header>
+        ${phase.description ? `<p class="muted">${formatMultiline(phase.description)}</p>` : ''}
+        ${chips.length ? `<div class="timeline-chips">${chips.join('')}</div>` : ''}
       `;
-      focusListEl.appendChild(li);
+
+      listItem.appendChild(card);
+      timelineEl.appendChild(listItem);
     });
-  }
+  };
 
-  function renderTodaySummary() {
-    const totalProjects = state.projects.length;
-    const totalTasks = state.projects.reduce((sum, project) => sum + project.phases.reduce((acc, phase) => acc + phase.tasks.length, 0), 0);
-    const openTasks = state.projects.reduce((sum, project) => sum + project.phases.reduce((acc, phase) => acc + phase.tasks.filter((task) => task.status !== 'done').length, 0), 0);
-    const overdue = state.projects.reduce((sum, project) => sum + project.phases.reduce((acc, phase) => acc + phase.tasks.filter((task) => isOverdue(task)).length, 0), 0);
-
-    todaySummaryEl.textContent = `${totalProjects} projects • ${totalTasks} tasks • ${overdue} overdue (${openTasks} active)`;
-  }
-
-  function computeFocusItems() {
-    const items = [];
-    state.projects.forEach((project) => {
-      project.phases.forEach((phase) => {
-        phase.tasks.forEach((task) => {
-          if (task.focus) {
-            items.push({
-              title: `${task.title} • ${project.name}`,
-              subtitle: `Pinned from ${phase.name}`,
-              detail: task.dueDate ? `Due ${deadlineLabel(task.dueDate).label}` : 'No due date',
-              score: 0,
-            });
-          } else if (task.dueDate && task.status !== 'done') {
-            const deadline = classifyDeadline(task.dueDate);
-            if (deadline === 'overdue' || deadline === 'today') {
-              items.push({
-                title: `${task.title} • ${project.name}`,
-                subtitle: `${capitalize(deadline)} task in ${phase.name}`,
-                detail: `Due ${deadlineLabel(task.dueDate).label}`,
-                score: deadline === 'overdue' ? 1 : 2,
-              });
-            } else if (deadline === 'upcoming') {
-              items.push({
-                title: `${task.title} • ${project.name}`,
-                subtitle: `Upcoming deadline in ${phase.name}`,
-                detail: `Due ${deadlineLabel(task.dueDate).label}`,
-                score: 3,
-              });
-            }
-          }
-        });
-      });
-    });
-
-    items.sort((a, b) => a.score - b.score);
-    return items;
-  }
-
-  function projectMatchesFilters(project) {
-    if (filters.type !== 'all' && project.type !== filters.type) {
-      return false;
+  const renderPhaseDetail = (project) => {
+    const phase = getSelectedPhase();
+    if (!project.phases.length) {
+      phaseDetailEl.innerHTML = `
+        <div>
+          <h3>Tijdens het bouwen…</h3>
+          <p class="muted">Selecteer of maak een fase om notities, bestanden en checklist-items toe te voegen.</p>
+        </div>
+      `;
+      return;
+    }
+    if (!phase) {
+      phaseDetailEl.innerHTML = `
+        <div>
+          <h3>Kies een fase</h3>
+          <p class="muted">Klik op een fase in de tijdbalk om details te bekijken.</p>
+        </div>
+      `;
+      return;
     }
 
-    if (filters.search) {
-      const query = filters.search.toLowerCase();
-      const haystack = [project.name, project.description, project.github || '']
-        .concat(project.phases.map((phase) => phase.name))
-        .concat(project.phases.flatMap((phase) => phase.tasks.map((task) => `${task.title} ${task.label || ''}`)))
-        .concat(project.notes.map((note) => `${note.title} ${note.content}`))
-        .join(' ') || '';
-      if (!haystack.toLowerCase().includes(query)) {
-        return false;
-      }
-    }
+    const checklistStats =
+      phase.checklist.length > 0
+        ? `${phase.checklist.filter((item) => item.done).length} van ${phase.checklist.length} voltooid`
+        : 'Nog geen stappen vastgelegd';
 
-    return true;
-  }
+    phaseDetailEl.innerHTML = `
+      <header>
+        <span class="muted">Fase ${project.phases.findIndex((item) => item.id === phase.id) + 1}</span>
+        <h3>${escapeHtml(phase.name)}</h3>
+        <p class="muted">${checklistStats}</p>
+      </header>
+      <form data-action="update-phase">
+        <label>
+          <span>Naam</span>
+          <input name="name" value="${escapeAttribute(phase.name)}" required />
+        </label>
+        <label>
+          <span>Omschrijving</span>
+          <textarea name="description" rows="3" placeholder="Wat gebeurt er in deze fase?">${escapeHtml(
+            phase.description || ''
+          )}</textarea>
+        </label>
+        <div class="range-field">
+          <label for="progress-range"><span>Voortgang</span></label>
+          <input id="progress-range" name="progress" type="range" min="0" max="100" value="${clamp(
+            Number(phase.progress) || 0,
+            0,
+            100
+          )}" />
+          <output>${clamp(Number(phase.progress) || 0, 0, 100)}%</output>
+        </div>
+        <div class="date-grid">
+          <label>
+            <span>Startdatum</span>
+            <input name="startDate" type="date" value="${escapeAttribute(phase.startDate || '')}" />
+          </label>
+          <label>
+            <span>Einddatum</span>
+            <input name="endDate" type="date" value="${escapeAttribute(phase.endDate || '')}" />
+          </label>
+        </div>
+        <div class="color-field">
+          <label>
+            <span>Kleur</span>
+            <input name="color" type="color" value="${escapeAttribute(phase.color || '#38bdf8')}" />
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Wijzigingen bewaren</button>
+          <button type="button" data-action="delete-phase">Fase verwijderen</button>
+        </div>
+      </form>
+      ${renderNotesSection(phase)}
+      ${renderFilesSection(phase)}
+      ${renderChecklistSection(phase)}
+    `;
+  };
 
-  function taskMatchesFilters(task) {
-    if (filters.status !== 'all' && task.status !== filters.status) {
-      return false;
-    }
-
-    if (filters.deadline !== 'all') {
-      const category = classifyDeadline(task.dueDate);
-      if (filters.deadline === 'overdue' && category !== 'overdue') {
-        return false;
-      }
-      if (filters.deadline === 'today' && category !== 'today') {
-        return false;
-      }
-      if (filters.deadline === 'upcoming' && category !== 'upcoming') {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  function projectProgress(project) {
-    const phaseProgress = project.phases.map((phase) => {
-      const auto = phase.tasks.length
-        ? Math.round((phase.tasks.filter((task) => task.status === 'done').length / phase.tasks.length) * 100)
-        : 0;
-      const manual = typeof phase.manualProgress === 'number' ? phase.manualProgress : auto;
-      return manual;
-    });
-
-    const totalTasks = project.phases.reduce((sum, phase) => sum + phase.tasks.length, 0);
-    const openTasks = project.phases.reduce((sum, phase) => sum + phase.tasks.filter((task) => task.status !== 'done').length, 0);
-
-    const progress = phaseProgress.length
-      ? Math.round(phaseProgress.reduce((sum, value) => sum + value, 0) / phaseProgress.length)
-      : 0;
-
-    return { progress, totalTasks, openTasks };
-  }
-
-  function countOverdueTasks(project) {
-    return project.phases.reduce((sum, phase) => sum + phase.tasks.filter((task) => isOverdue(task)).length, 0);
-  }
-
-  function countDueToday(project) {
-    return project.phases.reduce((sum, phase) => sum + phase.tasks.filter((task) => classifyDeadline(task.dueDate) === 'today').length, 0);
-  }
-
-  function isOverdue(task) {
-    if (!task.dueDate || task.status === 'done') {
-      return false;
-    }
-    return classifyDeadline(task.dueDate) === 'overdue';
-  }
-
-  function classifyDeadline(dateStr) {
-    if (!dateStr) {
-      return 'none';
-    }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const due = new Date(dateStr);
-    due.setHours(0, 0, 0, 0);
-
-    const diff = (due - today) / (1000 * 60 * 60 * 24);
-    if (diff < 0) {
-      return 'overdue';
-    }
-    if (diff === 0) {
-      return 'today';
-    }
-    if (diff <= 7) {
-      return 'upcoming';
-    }
-    return 'future';
-  }
-
-  function deadlineLabel(dateStr) {
-    if (!dateStr) {
-      return { label: 'unscheduled', status: 'none' };
-    }
-    const status = classifyDeadline(dateStr);
-    const label = DATE_FORMAT.format(new Date(dateStr));
-    return { label, status };
-  }
-
-  function statusLabel(status) {
-    switch (status) {
-      case 'todo':
-        return 'To do';
-      case 'progress':
-        return 'In progress';
-      case 'blocked':
-        return 'Blocked';
-      case 'done':
-        return 'Done';
-      default:
-        return status;
-    }
-  }
-
-  function escapeHtml(string) {
-    if (string == null) {
-      return '';
-    }
-    return String(string)
+  const escapeAttribute = (value) => {
+    return String(value ?? '')
       .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+      .replace(/</g, '&lt;');
+  };
 
-  function escapeAttribute(string) {
-    return escapeHtml(string);
-  }
+  const renderNotesSection = (phase) => {
+    const hidden = state.preferences.showNotes ? '' : '<p class="muted">Notities zijn verborgen in de tijdbalk.</p>';
+    const entries = phase.notes
+      .map(
+        (note) => `
+          <article class="entry-card" data-note-id="${note.id}">
+            <header>
+              <h4>${escapeHtml(note.title || 'Onbenoemde notitie')}</h4>
+              <time>${formatDate(note.createdAt) || ''}</time>
+            </header>
+            ${note.content ? `<p class="muted">${formatMultiline(note.content)}</p>` : ''}
+            <button type="button" data-action="remove-note">Verwijderen</button>
+          </article>
+        `
+      )
+      .join('');
+    return `
+      <section>
+        <header>
+          <h4>Notities</h4>
+          ${hidden}
+        </header>
+        <form data-action="add-note">
+          <label>
+            <span>Titel</span>
+            <input name="title" placeholder="Logboek regel" />
+          </label>
+          <label>
+            <span>Notitie</span>
+            <textarea name="content" rows="3" placeholder="Wat wil je onthouden?"></textarea>
+          </label>
+          <button type="submit">Notitie toevoegen</button>
+        </form>
+        <div class="entry-list">${entries || '<p class="muted">Nog geen notities.</p>'}</div>
+      </section>
+    `;
+  };
 
-  function capitalize(value) {
-    if (!value) {
-      return '';
+  const renderFilesSection = (phase) => {
+    const hidden = state.preferences.showFiles ? '' : '<p class="muted">Bestanden zijn verborgen in de tijdbalk.</p>';
+    const entries = phase.files
+      .map(
+        (file) => `
+          <article class="entry-card" data-file-id="${file.id}">
+            <header>
+              <h4>${escapeHtml(file.name || 'Bestand')}</h4>
+              <time>${formatDate(file.createdAt) || ''}</time>
+            </header>
+            ${file.link ? `<p><a href="${escapeAttribute(file.link)}" target="_blank" rel="noopener">Open link</a></p>` : ''}
+            ${file.note ? `<p class="muted">${formatMultiline(file.note)}</p>` : ''}
+            <button type="button" data-action="remove-file">Verwijderen</button>
+          </article>
+        `
+      )
+      .join('');
+    return `
+      <section>
+        <header>
+          <h4>Bestanden &amp; referenties</h4>
+          ${hidden}
+        </header>
+        <form data-action="add-file">
+          <label>
+            <span>Naam</span>
+            <input name="name" placeholder="Render of schema" />
+          </label>
+          <label>
+            <span>Link (optioneel)</span>
+            <input name="link" type="url" placeholder="https://..." />
+          </label>
+          <label>
+            <span>Opmerking</span>
+            <textarea name="note" rows="2" placeholder="Waarom is dit bestand belangrijk?"></textarea>
+          </label>
+          <button type="submit">Bestand toevoegen</button>
+        </form>
+        <div class="entry-list">${entries || '<p class="muted">Nog geen bestanden.</p>'}</div>
+      </section>
+    `;
+  };
+
+  const renderChecklistSection = (phase) => {
+    const hidden = state.preferences.showChecklist
+      ? ''
+      : '<p class="muted">Checklist is verborgen in de tijdbalk.</p>';
+    const items = phase.checklist
+      .map(
+        (item) => `
+          <label class="checklist-item" data-checklist-id="${item.id}">
+            <input type="checkbox" ${item.done ? 'checked' : ''} />
+            <span>${escapeHtml(item.text)}</span>
+            <button type="button" data-action="remove-check">Verwijderen</button>
+          </label>
+        `
+      )
+      .join('');
+    return `
+      <section>
+        <header>
+          <h4>Checklist</h4>
+          ${hidden}
+        </header>
+        <form data-action="add-check">
+          <label>
+            <span>Stap</span>
+            <input name="text" placeholder="Controleer kabels" required />
+          </label>
+          <button type="submit">Stap toevoegen</button>
+        </form>
+        <div class="checklist">${items || '<p class="muted">Nog geen checklist.</p>'}</div>
+        ${phase.checklist.length ? '<button class="clear-button" data-action="clear-checklist">Checklist legen</button>' : ''}
+      </section>
+    `;
+  };
+
+  const render = () => {
+    applyTheme();
+    renderProjects();
+    const project = getSelectedProject();
+    if (!project) {
+      emptyState.hidden = false;
+      projectWorkspace.hidden = true;
+      return;
     }
-    return value.charAt(0).toUpperCase() + value.slice(1);
-  }
+    emptyState.hidden = true;
+    projectWorkspace.hidden = false;
+    projectTitle.textContent = project.name;
+    projectDescription.textContent = project.description || 'Voeg een korte beschrijving toe via het projectmenu.';
 
-  function shareUrl(project) {
-    const slug = project.share?.slug;
-    return slug ? `https://codex.local/share/${slug}` : '';
-  }
+    viewToggleInputs.forEach((input) => {
+      const pref = input.dataset.pref;
+      input.checked = !!state.preferences[pref];
+    });
 
-  function generateId() {
-    return `id-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`;
-  }
+    renderTimeline(project);
+    renderPhaseDetail(project);
+  };
 
-  function normalizeProject(project) {
-    project.phases = project.phases || [];
-    project.files = project.files || [];
-    project.notes = project.notes || [];
-    project.bom = project.bom || [];
-    project.logbook = project.logbook || [];
-    project.checklist = project.checklist || [];
-    project.releases = project.releases || [];
-    project.issues = project.issues || [];
-  }
-  function loadState() {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return defaultState();
+  toggleProjectFormButton.addEventListener('click', () => {
+    const hidden = projectForm.hasAttribute('hidden');
+    if (hidden) {
+      projectForm.removeAttribute('hidden');
+      projectForm.elements.name?.focus();
+    } else {
+      projectForm.setAttribute('hidden', '');
     }
-    try {
-      const parsed = JSON.parse(raw);
-      parsed.projects = parsed.projects || [];
-      parsed.projects.forEach(normalizeProject);
-      return parsed;
-    } catch (error) {
-      console.warn('Unable to parse stored state', error);
-      return defaultState();
-    }
-  }
-
-  function upsertProject(project) {
-    project.updatedAt = new Date().toISOString();
-  }
+  });
 
   projectForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const formData = new FormData(projectForm);
-    const name = formData.get('name').trim();
-    if (!name) {
-      return;
-    }
-    const type = formData.get('type') || 'general';
-    const description = formData.get('description')?.trim() || '';
-    const github = formData.get('github')?.trim() || '';
-
+    const name = String(formData.get('name') || '').trim();
+    if (!name) return;
     const project = {
-      id: generateId(),
+      id: uniqueId(),
       name,
-      type,
-      description,
-      github,
-      phases: [],
-      files: [],
-      notes: [],
-      bom: [],
-      logbook: [],
-      checklist: [],
-      releases: [],
-      issues: [],
+      type: formData.get('type') === 'physical' ? 'physical' : 'digital',
+      description: String(formData.get('description') || '').trim(),
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      share: { enabled: false, slug: '' },
+      phases: [],
     };
-
     state.projects.push(project);
-    selectedProjectId = project.id;
+    state.selectedProjectId = project.id;
+    state.selectedPhaseId = null;
     projectForm.reset();
-    saveStateAndRender();
+    projectForm.setAttribute('hidden', '');
+    saveAndRender();
   });
 
   projectListEl.addEventListener('click', (event) => {
     const item = event.target.closest('.project-item');
-    if (!item) {
+    if (!item) return;
+    const projectId = item.dataset.projectId;
+    if (!projectId) return;
+    state.selectedProjectId = projectId;
+    state.selectedPhaseId = null;
+    saveAndRender();
+  });
+
+  addPhaseButton.addEventListener('click', () => {
+    const project = getSelectedProject();
+    if (!project) return;
+    const phase = createPhase(project.phases.length);
+    project.phases.push(phase);
+    state.selectedPhaseId = phase.id;
+    saveAndRender();
+  });
+
+  timelineEl.addEventListener('click', (event) => {
+    const card = event.target.closest('.timeline-card');
+    if (!card) return;
+    const phaseId = card.dataset.phaseId;
+    if (!phaseId) return;
+    state.selectedPhaseId = phaseId;
+    saveAndRender();
+  });
+
+  viewToggleInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      const pref = input.dataset.pref;
+      state.preferences[pref] = input.checked;
+      saveAndRender();
+    });
+  });
+
+  themeToggle.addEventListener('click', () => {
+    state.preferences.theme = state.preferences.theme === 'light' ? 'dark' : 'light';
+    saveAndRender();
+  });
+
+  phaseDetailEl.addEventListener('input', (event) => {
+    if (event.target.matches('input[type="range"][name="progress"]')) {
+      const output = event.target.closest('.range-field')?.querySelector('output');
+      if (output) {
+        output.textContent = `${event.target.value}%`;
+      }
+    }
+  });
+
+  phaseDetailEl.addEventListener('submit', (event) => {
+    const form = event.target.closest('form[data-action]');
+    if (!form) return;
+    event.preventDefault();
+    const project = getSelectedProject();
+    const phase = getSelectedPhase();
+    if (!project || !phase) return;
+    const action = form.dataset.action;
+    const formData = new FormData(form);
+
+    switch (action) {
+      case 'update-phase': {
+        phase.name = String(formData.get('name') || '').trim() || phase.name;
+        phase.description = String(formData.get('description') || '').trim();
+        phase.progress = clamp(Number(formData.get('progress')) || 0, 0, 100);
+        phase.startDate = formData.get('startDate') ? String(formData.get('startDate')) : '';
+        phase.endDate = formData.get('endDate') ? String(formData.get('endDate')) : '';
+        phase.color = formData.get('color') ? String(formData.get('color')) : phase.color;
+        saveAndRender();
+        break;
+      }
+      case 'add-note': {
+        const title = String(formData.get('title') || '').trim();
+        const content = String(formData.get('content') || '').trim();
+        if (!title && !content) return;
+        phase.notes.unshift({
+          id: uniqueId(),
+          title,
+          content,
+          createdAt: new Date().toISOString(),
+        });
+        form.reset();
+        saveAndRender();
+        break;
+      }
+      case 'add-file': {
+        const name = String(formData.get('name') || '').trim();
+        const link = String(formData.get('link') || '').trim();
+        const note = String(formData.get('note') || '').trim();
+        if (!name && !link && !note) return;
+        phase.files.unshift({
+          id: uniqueId(),
+          name,
+          link,
+          note,
+          createdAt: new Date().toISOString(),
+        });
+        form.reset();
+        saveAndRender();
+        break;
+      }
+      case 'add-check': {
+        const text = String(formData.get('text') || '').trim();
+        if (!text) return;
+        phase.checklist.push({
+          id: uniqueId(),
+          text,
+          done: false,
+        });
+        form.reset();
+        saveAndRender();
+        break;
+      }
+      default:
+        break;
+    }
+  });
+
+  phaseDetailEl.addEventListener('click', (event) => {
+    const project = getSelectedProject();
+    const phase = getSelectedPhase();
+    if (!project || !phase) return;
+
+    if (event.target.matches('[data-action="delete-phase"]')) {
+      const confirmDelete = confirm('Weet je zeker dat je deze fase wilt verwijderen?');
+      if (!confirmDelete) return;
+      project.phases = project.phases.filter((item) => item.id !== phase.id);
+      state.selectedPhaseId = project.phases[0]?.id || null;
+      saveAndRender();
+      return;
+    }
+
+    const noteCard = event.target.closest('[data-note-id]');
+    if (noteCard && event.target.matches('[data-action="remove-note"]')) {
+      const noteId = noteCard.dataset.noteId;
+      phase.notes = phase.notes.filter((note) => note.id !== noteId);
+      saveAndRender();
+      return;
+    }
+
+    const fileCard = event.target.closest('[data-file-id]');
+    if (fileCard && event.target.matches('[data-action="remove-file"]')) {
+      const fileId = fileCard.dataset.fileId;
+      phase.files = phase.files.filter((file) => file.id !== fileId);
+      saveAndRender();
+      return;
+    }
+
+    const checklistItem = event.target.closest('[data-checklist-id]');
+    if (checklistItem && event.target.matches('[data-action="remove-check"]')) {
+      const id = checklistItem.dataset.checklistId;
+      phase.checklist = phase.checklist.filter((item) => item.id !== id);
+      saveAndRender();
       return;
     }
     selectedProjectId = item.dataset.projectId;
     saveStateAndRender();
   });
 
-  searchInput.addEventListener('input', () => {
-    filters.search = searchInput.value.trim();
-    renderProjectList();
-    renderProjectDetail();
-  });
-
-  statusFilter.addEventListener('change', () => {
-    filters.status = statusFilter.value;
-    renderProjectDetail();
-  });
-
-  deadlineFilter.addEventListener('change', () => {
-    filters.deadline = deadlineFilter.value;
-    renderProjectDetail();
-  });
-
-  typeFilter.addEventListener('change', () => {
-    filters.type = typeFilter.value;
-    renderProjectList();
-    renderProjectDetail();
-  });
-
-  themeToggle.addEventListener('click', () => {
-    document.body.classList.toggle('light');
-    themeToggle.textContent = document.body.classList.contains('light') ? 'Toggle dark' : 'Toggle light';
-    themeToggle.setAttribute('aria-pressed', document.body.classList.contains('light') ? 'false' : 'true');
-  });
-
-  projectDetailEl.addEventListener('change', (event) => {
-    const target = event.target;
-
-    if (target.matches('[data-action="phase-progress"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const phase = project.phases.find((item) => item.id === target.dataset.phaseId);
-      if (phase) {
-        phase.manualProgress = Number(target.value);
-        const label = projectDetailEl.querySelector(`[data-phase-progress="${phase.id}"]`);
-        if (label) {
-          label.textContent = String(phase.manualProgress);
-        }
-        upsertProject(project);
-        saveStateAndRender();
-      }
-    }
-
-    if (target.matches('[data-action="task-status"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const phase = project.phases.find((item) => item.id === target.dataset.phaseId);
-      if (!phase) {
-        return;
-      }
-      const task = phase.tasks.find((item) => item.id === target.dataset.taskId);
-      if (!task) {
-        return;
-      }
-      task.status = target.value;
-      if (task.status === 'done') {
-        task.percentComplete = 100;
-      }
-      task.updatedAt = new Date().toISOString();
-      upsertProject(project);
-      saveStateAndRender();
-    }
-
-    if (target.matches('[data-action="task-progress"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const phase = project.phases.find((item) => item.id === target.dataset.phaseId);
-      if (!phase) {
-        return;
-      }
-      const task = phase.tasks.find((item) => item.id === target.dataset.taskId);
-      if (!task) {
-        return;
-      }
-      task.percentComplete = Number(target.value);
-      if (task.percentComplete === 100) {
-        task.status = 'done';
-      }
-      task.updatedAt = new Date().toISOString();
-      const label = projectDetailEl.querySelector(`[data-task-progress="${task.id}"]`);
-      if (label) {
-        label.textContent = String(task.percentComplete);
-      }
-      upsertProject(project);
-      saveStateAndRender();
-    }
-
-    if (target.matches('[data-action="toggle-share"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      if (!project.share) {
-        project.share = { enabled: false, slug: '' };
-      }
-      project.share.enabled = target.checked;
-      if (project.share.enabled && !project.share.slug) {
-        project.share.slug = generateId();
-      }
-      upsertProject(project);
-      saveStateAndRender();
-    }
-
-    if (target.matches('[data-action="bom-status"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const item = project.bom.find((entry) => entry.id === target.dataset.bomId);
-      if (item) {
-        item.status = target.value;
-        upsertProject(project);
-        saveStateAndRender();
-      }
-    }
-
-    if (target.matches('[data-action="toggle-checklist"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const entry = project.checklist.find((item) => item.id === target.dataset.checklistId);
-      if (entry) {
-        entry.done = target.checked;
-        upsertProject(project);
-        saveStateAndRender();
-      }
-    }
-
-    if (target.matches('[data-action="release-status"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const release = project.releases.find((item) => item.id === target.dataset.releaseId);
-      if (release) {
-        release.status = target.value;
-        release.updatedAt = new Date().toISOString();
-        upsertProject(project);
-        saveStateAndRender();
-      }
-    }
-
-    if (target.matches('[data-action="issue-status"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const issue = project.issues.find((item) => item.id === target.dataset.issueId);
-      if (issue) {
-        issue.status = target.value;
-        issue.updatedAt = new Date().toISOString();
-        upsertProject(project);
-        saveStateAndRender();
-      }
+    if (event.target.matches('[data-action="clear-checklist"]')) {
+      const confirmClear = confirm('Checklist legen?');
+      if (!confirmClear) return;
+      phase.checklist = [];
+      saveAndRender();
     }
   });
 
-  projectDetailEl.addEventListener('click', (event) => {
-    const target = event.target;
-
-    if (target.matches('[data-action="save-file"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const file = project.files.find((item) => item.id === target.dataset.fileId);
-      if (!file) {
-        return;
-      }
-      const editor = projectDetailEl.querySelector(`[data-file-editor="${file.id}"]`);
-      if (!editor) {
-        return;
-      }
-      if (!file.versions) {
-        file.versions = [];
-      }
-      file.versions.unshift({ timestamp: new Date().toISOString(), content: file.content });
-      file.content = editor.value;
-      file.updatedAt = new Date().toISOString();
-      upsertProject(project);
-      saveStateAndRender();
-    }
-
-    if (target.matches('[data-action="save-note"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const note = project.notes.find((item) => item.id === target.dataset.noteId);
-      if (!note) {
-        return;
-      }
-      const editor = projectDetailEl.querySelector(`[data-note-editor="${note.id}"]`);
-      if (!editor) {
-        return;
-      }
-      if (!note.versions) {
-        note.versions = [];
-      }
-      note.versions.unshift({ timestamp: new Date().toISOString(), content: note.content });
-      note.content = editor.value;
-      note.updatedAt = new Date().toISOString();
-      upsertProject(project);
-      saveStateAndRender();
-    }
-
-    if (target.matches('[data-action="toggle-focus"]')) {
-      const project = loadProject(selectedProjectId);
-      if (!project) {
-        return;
-      }
-      const phase = project.phases.find((item) => item.id === target.dataset.phaseId);
-      if (!phase) {
-        return;
-      }
-      const task = phase.tasks.find((item) => item.id === target.dataset.taskId);
-      if (!task) {
-        return;
-      }
-      task.focus = !task.focus;
-      upsertProject(project);
-      saveStateAndRender();
+  phaseDetailEl.addEventListener('change', (event) => {
+    const project = getSelectedProject();
+    const phase = getSelectedPhase();
+    if (!project || !phase) return;
+    if (event.target.matches('[data-checklist-id] input[type="checkbox"], .checklist-item input[type="checkbox"]')) {
+      const container = event.target.closest('[data-checklist-id]');
+      if (!container) return;
+      const id = container.dataset.checklistId;
+      const item = phase.checklist.find((entry) => entry.id === id);
+      if (!item) return;
+      item.done = event.target.checked;
+      saveAndRender();
     }
   });
 
-  projectDetailEl.addEventListener('submit', (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLFormElement)) {
-      return;
-    }
-    event.preventDefault();
-
-    const project = loadProject(selectedProjectId);
-    if (!project) {
-      return;
-    }
-
-    if (target.dataset.action === 'add-phase') {
-      const formData = new FormData(target);
-      const name = formData.get('name')?.trim();
-      if (!name) {
-        return;
-      }
-      project.phases.push({
-        id: generateId(),
-        name,
-        priority: formData.get('priority') || 'medium',
-        deadline: formData.get('deadline') || '',
-        tasks: [],
-        manualProgress: 0,
-        createdAt: new Date().toISOString(),
-      });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-task') {
-      const formData = new FormData(target);
-      const title = formData.get('title')?.trim();
-      if (!title) {
-        return;
-      }
-      const phase = project.phases.find((item) => item.id === target.dataset.phaseId);
-      if (!phase) {
-        return;
-      }
-      phase.tasks.push({
-        id: generateId(),
-        title,
-        label: formData.get('label')?.trim() || '',
-        priority: formData.get('priority') || 'medium',
-        dueDate: formData.get('dueDate') || '',
-        notes: formData.get('notes')?.trim() || '',
-        status: 'todo',
-        percentComplete: 0,
-        focus: false,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-note') {
-      const formData = new FormData(target);
-      const title = formData.get('title')?.trim();
-      const content = formData.get('content')?.trim();
-      if (!title || !content) {
-        return;
-      }
-      project.notes.push({
-        id: generateId(),
-        title,
-        content,
-        phaseId: formData.get('phaseId') || '',
-        timelineDate: formData.get('timelineDate') || '',
-        versions: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-bom') {
-      const formData = new FormData(target);
-      const item = formData.get('item')?.trim();
-      if (!item) {
-        return;
-      }
-      project.bom.push({
-        id: generateId(),
-        item,
-        supplier: formData.get('supplier')?.trim() || '',
-        cost: formData.get('cost') || 0,
-        status: formData.get('status') || 'needed',
-      });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-logbook') {
-      const formData = new FormData(target);
-      const title = formData.get('title')?.trim();
-      if (!title) {
-        return;
-      }
-      project.logbook.unshift({
-        id: generateId(),
-        title,
-        date: formData.get('date') || '',
-        image: formData.get('image')?.trim() || '',
-        notes: formData.get('notes')?.trim() || '',
-      });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-checklist-item') {
-      const formData = new FormData(target);
-      const label = formData.get('label')?.trim();
-      if (!label) {
-        return;
-      }
-      project.checklist.push({ id: generateId(), label, done: false });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-release') {
-      const formData = new FormData(target);
-      const name = formData.get('name')?.trim();
-      if (!name) {
-        return;
-      }
-      project.releases.push({
-        id: generateId(),
-        name,
-        targetDate: formData.get('targetDate') || '',
-        status: formData.get('status') || 'planning',
-        description: formData.get('description')?.trim() || '',
-        createdAt: new Date().toISOString(),
-      });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-issue') {
-      const formData = new FormData(target);
-      const title = formData.get('title')?.trim();
-      if (!title) {
-        return;
-      }
-      project.issues.push({
-        id: generateId(),
-        title,
-        issueType: formData.get('issueType') || 'feature',
-        status: formData.get('status') || 'todo',
-        dueDate: formData.get('dueDate') || '',
-        notes: formData.get('notes')?.trim() || '',
-        createdAt: new Date().toISOString(),
-      });
-      upsertProject(project);
-      target.reset();
-      saveStateAndRender();
-      return;
-    }
-
-    if (target.dataset.action === 'add-file') {
-      handleFileFormSubmission(project, target).catch((error) => {
-        console.error('Failed to attach file', error);
-      });
-    }
-  });
-
-  async function handleFileFormSubmission(project, form) {
-    const formData = new FormData(form);
-    const title = formData.get('title')?.trim();
-    if (!title) {
-      return;
-    }
-    const type = formData.get('type') || 'text';
-    const phaseId = formData.get('phaseId') || '';
-    const content = formData.get('content')?.trim() || '';
-    const fileInput = form.querySelector('input[name="fileData"]');
-
-    let storedContent = content;
-    const metadata = {};
-
-    if (fileInput?.files?.length) {
-      const file = fileInput.files[0];
-      metadata.originalName = file.name;
-      metadata.mime = file.type;
-      storedContent = await readFileAsDataUrl(file);
-      if (file.type.startsWith('image/')) {
-        metadata.kind = 'image';
-      }
-    }
-
-    project.files.push({
-      id: generateId(),
-      title,
-      type,
-      phaseId,
-      content: storedContent,
-      metadata,
-      versions: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    upsertProject(project);
-    form.reset();
-    saveStateAndRender();
-  }
-
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-  }
-
-  renderAll();
+  ensureSelections();
+  saveState();
+  render();
 };
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', ready);
-} else {
-  ready();
-}
+document.addEventListener('DOMContentLoaded', ready);
