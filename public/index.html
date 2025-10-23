@@ -1,43 +1,92 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Upload & Curl Generator</title>
-    <link rel="stylesheet" href="/style.css" />
+    <title>Project Codex Timeline</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
-    <main class="container">
-      <h1>Bestand uploaden</h1>
-      <p>Upload een bestand en kopieer direct het cURL-commando om het terug te downloaden.</p>
-
-      <form id="upload-form">
-        <label class="file-input">
-          <span>Kies een bestand</span>
-          <input type="file" name="file" id="file-input" required />
-        </label>
-        <button type="submit">Uploaden</button>
-      </form>
-
-      <div class="status" id="status" role="status" aria-live="polite"></div>
-
-      <section id="result" class="hidden">
-        <h2>Download informatie</h2>
-        <p>
-          Download link:
-          <a id="download-link" href="#" target="_blank" rel="noopener noreferrer"></a>
-        </p>
-        <div class="curl-output">
-          <label for="curl-command">cURL commando</label>
-          <div class="copy-group">
-            <input id="curl-command" readonly />
-            <button type="button" id="copy-button">Kopieer</button>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Project selector">
+        <header class="sidebar__header">
+          <div>
+            <h1>Codex Timeline</h1>
+            <p>Een minimalistische motivator voor je projecten.</p>
           </div>
-          <p class="copy-feedback" id="copy-feedback"></p>
-        </div>
-      </section>
-    </main>
-
-    <script src="/main.js"></script>
+          <button id="theme-toggle" class="icon-button" type="button" aria-label="Wissel thema">
+            <span aria-hidden="true">🌙</span>
+          </button>
+        </header>
+        <section class="sidebar__section">
+          <button id="toggle-project-form" class="ghost-button" type="button">
+            + Nieuw project
+          </button>
+          <form id="project-form" class="sidebar-form" hidden>
+            <label>
+              <span>Projectnaam</span>
+              <input name="name" placeholder="Mijn droomproject" required />
+            </label>
+            <label>
+              <span>Type</span>
+              <select name="type">
+                <option value="physical">Fysiek</option>
+                <option value="digital">Digitaal</option>
+              </select>
+            </label>
+            <label>
+              <span>Omschrijving</span>
+              <textarea name="description" rows="2" placeholder="Waar draait dit project om?"></textarea>
+            </label>
+            <button type="submit">Project opslaan</button>
+          </form>
+        </section>
+        <section class="sidebar__section">
+          <h2>Projecten</h2>
+          <ul id="project-list" class="project-list" role="list"></ul>
+        </section>
+      </aside>
+      <main class="workspace">
+        <section id="empty-state" class="empty-state" hidden>
+          <h2>Start met een project</h2>
+          <p>Maak een project in het menu links om een tijdbalk met fases op te bouwen.</p>
+        </section>
+        <section id="project-workspace" class="project-workspace" hidden>
+          <header class="project-header">
+            <div>
+              <h2 id="project-title"></h2>
+              <p id="project-description" class="muted"></p>
+            </div>
+            <div class="project-controls">
+              <button id="add-phase-btn" type="button">+ Fase toevoegen</button>
+              <div class="view-toggles" role="group" aria-label="Zichtbaarheid">
+                <label><input type="checkbox" data-pref="showNotes" checked /> Notities</label>
+                <label><input type="checkbox" data-pref="showFiles" checked /> Bestanden</label>
+                <label><input type="checkbox" data-pref="showChecklist" checked /> Checklist</label>
+              </div>
+            </div>
+          </header>
+          <div class="layout-grid">
+            <section class="timeline-area" aria-label="Fasering">
+              <div class="timeline-header">
+                <div>
+                  <h3>Tijdbalk</h3>
+                  <p class="muted">Klik op een fase om details te openen of voortgang bij te werken.</p>
+                </div>
+              </div>
+              <ol id="timeline" class="timeline" role="list"></ol>
+            </section>
+            <aside id="phase-detail" class="phase-detail" aria-live="polite"></aside>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="main.js" type="module"></script>
   </body>
 </html>
