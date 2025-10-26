@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'codex-timeline-state-v1';
+const STATE_ENDPOINT = '/api/state';
 const DEFAULT_PREFERENCES = {
   showNotes: true,
   showFiles: true,
@@ -96,10 +97,10 @@ const normalizeStateShape = (rawState) => {
   return state;
 };
 
-const loadState = () => {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return createState();
+const loadLocalState = () => {
   try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return createState();
     const parsed = JSON.parse(stored);
     return {
       ...createState(),
@@ -107,12 +108,33 @@ const loadState = () => {
       preferences: { ...DEFAULT_PREFERENCES, ...(parsed?.preferences || {}) },
     };
   } catch (error) {
-    console.warn('Kon opgeslagen staat niet lezen, begin vers.', error);
+    console.warn('Kon lokale opslag niet lezen, begin vers.', error);
     return createState();
   }
 };
 
-const ready = () => {
+const fetchServerState = async () => {
+  try {
+    const response = await fetch(STATE_ENDPOINT, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Server antwoordde met status ${response.status}`);
+    }
+    const data = await response.json();
+    if (!data || typeof data !== 'object') {
+      throw new Error('Server stuurde geen geldige state terug.');
+    }
+    return {
+      ...createState(),
+      ...data,
+      preferences: { ...DEFAULT_PREFERENCES, ...(data?.preferences || {}) },
+    };
+  } catch (error) {
+    console.warn('Kon serverstaat niet laden, val terug op lokale opslag.', error);
+    return null;
+  }
+};
+
+const ready = async () => {
   const root = document.documentElement;
   const projectListEl = document.getElementById('project-list');
   const projectForm = document.getElementById('project-form');
@@ -127,10 +149,31 @@ const ready = () => {
   const themeToggle = document.getElementById('theme-toggle');
   const viewToggleInputs = document.querySelectorAll('.view-toggles input[type="checkbox"]');
 
-  let state = normalizeStateShape(loadState());
+  let state = normalizeStateShape(createState());
+
+  const updateLocalCache = () => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (error) {
+      console.warn('Kon lokale cache niet schrijven.', error);
+    }
+  };
+
+  const persistStateToServer = async () => {
+    try {
+      await fetch(STATE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(state),
+      });
+    } catch (error) {
+      console.warn('Kon projecten niet naar de server opslaan.', error);
+    }
+  };
 
   const saveState = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    updateLocalCache();
+    void persistStateToServer();
   };
 
   const saveAndRender = () => {
@@ -258,6 +301,14 @@ const ready = () => {
         chips.push(
           `<span class="chip note" title="Notities">${phase.notes.length} notitie${phase.notes.length === 1 ? '' : 's'}</span>`
         );
+      }
+      if (state.preferences.showFiles && phase.files.length) {
+        chips.push(
+          `<span class="chip file" title="Bestanden">${phase.files.length} bestand${phase.files.length === 1 ? '' : 'en'}</span>`
+        );
+      }
+      if (state.preferences.showChecklist && checklistStats) {
+        chips.push(`<span class="chip checklist" title="Checklist">${checklistStats}</span>`);
       }
       if (state.preferences.showFiles && phase.files.length) {
         chips.push(
@@ -699,8 +750,48 @@ const ready = () => {
       saveAndRender();
       return;
     }
-    selectedProjectId = item.dataset.projectId;
-    saveStateAndRender();
+
+    if (event.target.matches('[data-action="clear-checklist"]')) {
+      const confirmClear = confirm('Checklist legen?');
+      if (!confirmClear) return;
+      phase.checklist = [];
+      saveAndRender();
+    }
+  });
+
+  phaseDetailEl.addEventListener('change', (event) => {
+    const project = getSelectedProject();
+    const phase = getSelectedPhase();
+    if (!project || !phase) return;
+    if (event.target.matches('[data-checklist-id] input[type="checkbox"], .checklist-item input[type="checkbox"]')) {
+      const container = event.target.closest('[data-checklist-id]');
+      if (!container) return;
+      const id = container.dataset.checklistId;
+      const item = phase.checklist.find((entry) => entry.id === id);
+      if (!item) return;
+      item.done = event.target.checked;
+      saveAndRender();
+    }
+  });
+
+  const hydrateState = async () => {
+    const serverState = await fetchServerState();
+    if (serverState) {
+      state = normalizeStateShape(serverState);
+    } else {
+      state = normalizeStateShape(loadLocalState());
+    }
+    ensureSelections();
+    updateLocalCache();
+    render();
+  };
+
+  await hydrateState();
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  ready().catch((error) => {
+    console.error('Kon de applicatie niet initialiseren.', error);
   });
 
     if (event.target.matches('[data-action="clear-checklist"]')) {
