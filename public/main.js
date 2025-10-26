@@ -310,6 +310,15 @@ const ready = async () => {
       if (state.preferences.showChecklist && checklistStats) {
         chips.push(`<span class="chip checklist" title="Checklist">${checklistStats}</span>`);
       }
+      if (state.preferences.showFiles && phase.files.length) {
+        chips.push(
+          `<span class="chip file" title="Bestanden">${phase.files.length} bestand${phase.files.length === 1 ? '' : 'en'}</span>`
+        );
+      }
+      if (state.preferences.showChecklist && checklistStats) {
+        chips.push(`<span class="chip checklist" title="Checklist">${checklistStats}</span>`);
+      }
+    }
 
       card.innerHTML = `
         <header>
@@ -784,4 +793,33 @@ document.addEventListener('DOMContentLoaded', () => {
   ready().catch((error) => {
     console.error('Kon de applicatie niet initialiseren.', error);
   });
-});
+
+    if (event.target.matches('[data-action="clear-checklist"]')) {
+      const confirmClear = confirm('Checklist legen?');
+      if (!confirmClear) return;
+      phase.checklist = [];
+      saveAndRender();
+    }
+  });
+
+  phaseDetailEl.addEventListener('change', (event) => {
+    const project = getSelectedProject();
+    const phase = getSelectedPhase();
+    if (!project || !phase) return;
+    if (event.target.matches('[data-checklist-id] input[type="checkbox"], .checklist-item input[type="checkbox"]')) {
+      const container = event.target.closest('[data-checklist-id]');
+      if (!container) return;
+      const id = container.dataset.checklistId;
+      const item = phase.checklist.find((entry) => entry.id === id);
+      if (!item) return;
+      item.done = event.target.checked;
+      saveAndRender();
+    }
+  });
+
+  ensureSelections();
+  saveState();
+  render();
+};
+
+document.addEventListener('DOMContentLoaded', ready);
