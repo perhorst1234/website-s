@@ -78,6 +78,35 @@ const upload = multer({ storage });
 
 app.use(express.json());
 ensureStateFile();
+app.get('/', (req, res, next) => {
+  const rawName = typeof req.query?.name === 'string' ? req.query.name.trim() : '';
+  if (!rawName) {
+    return next();
+  }
+
+  const project = {
+    id: generateId(),
+    name: rawName,
+    type: req.query?.type === 'physical' ? 'physical' : 'digital',
+    description: typeof req.query?.description === 'string' ? req.query.description.trim() : '',
+    createdAt: new Date().toISOString(),
+    phases: [],
+  };
+
+  try {
+    const state = readState();
+    state.projects.push(project);
+    state.selectedProjectId = project.id;
+    state.selectedPhaseId = null;
+    writeState(state);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('Kon project niet opslaan vanuit query.', error);
+  }
+
+  return res.redirect(303, '/');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(uploadDir));
 
