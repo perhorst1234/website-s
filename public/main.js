@@ -341,6 +341,10 @@ const ready = async () => {
       if (state.preferences.showChecklist && checklistStats) {
         chips.push(`<span class="chip checklist" title="Checklist">${checklistStats}</span>`);
       }
+      if (state.preferences.showChecklist && checklistStats) {
+        chips.push(`<span class="chip checklist" title="Checklist">${checklistStats}</span>`);
+      }
+    }
 
       card.innerHTML = `
         <header>
@@ -372,6 +376,227 @@ const ready = async () => {
         </div>
       `;
       return;
+    }
+    if (!phase) {
+      phaseDetailEl.innerHTML = `
+        <div>
+          <h3>Kies een fase</h3>
+          <p class="muted">Klik op een fase in de tijdbalk om details te bekijken.</p>
+        </div>
+      `;
+      return;
+    }
+
+    const checklistStats =
+      phase.checklist.length > 0
+        ? `${phase.checklist.filter((item) => item.done).length} van ${phase.checklist.length} voltooid`
+        : 'Nog geen stappen vastgelegd';
+
+    phaseDetailEl.innerHTML = `
+      <header>
+        <span class="muted">Fase ${project.phases.findIndex((item) => item.id === phase.id) + 1}</span>
+        <h3>${escapeHtml(phase.name)}</h3>
+        <p class="muted">${checklistStats}</p>
+      </header>
+      <form data-action="update-phase">
+        <label>
+          <span>Naam</span>
+          <input name="name" value="${escapeAttribute(phase.name)}" required />
+        </label>
+        <label>
+          <span>Omschrijving</span>
+          <textarea name="description" rows="3" placeholder="Wat gebeurt er in deze fase?">${escapeHtml(
+            phase.description || ''
+          )}</textarea>
+        </label>
+        <div class="range-field">
+          <label for="progress-range"><span>Voortgang</span></label>
+          <input id="progress-range" name="progress" type="range" min="0" max="100" value="${clamp(
+            Number(phase.progress) || 0,
+            0,
+            100
+          )}" />
+          <output>${clamp(Number(phase.progress) || 0, 0, 100)}%</output>
+        </div>
+        <div class="date-grid">
+          <label>
+            <span>Startdatum</span>
+            <input name="startDate" type="date" value="${escapeAttribute(phase.startDate || '')}" />
+          </label>
+          <label>
+            <span>Einddatum</span>
+            <input name="endDate" type="date" value="${escapeAttribute(phase.endDate || '')}" />
+          </label>
+        </div>
+        <div class="color-field">
+          <label>
+            <span>Kleur</span>
+            <input name="color" type="color" value="${escapeAttribute(phase.color || '#38bdf8')}" />
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Wijzigingen bewaren</button>
+          <button type="button" data-action="delete-phase">Fase verwijderen</button>
+        </div>
+      </form>
+      ${renderNotesSection(phase)}
+      ${renderFilesSection(phase)}
+      ${renderChecklistSection(phase)}
+    `;
+  };
+
+  const escapeAttribute = (value) => {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;');
+  };
+
+  const renderNotesSection = (phase) => {
+    const hidden = state.preferences.showNotes ? '' : '<p class="muted">Notities zijn verborgen in de tijdbalk.</p>';
+    const entries = phase.notes
+      .map(
+        (note) => `
+          <article class="entry-card" data-note-id="${note.id}">
+            <header>
+              <h4>${escapeHtml(note.title || 'Onbenoemde notitie')}</h4>
+              <time>${formatDate(note.createdAt) || ''}</time>
+            </header>
+            ${note.content ? `<p class="muted">${formatMultiline(note.content)}</p>` : ''}
+            <button type="button" data-action="remove-note">Verwijderen</button>
+          </article>
+        `
+      )
+      .join('');
+    return `
+      <section>
+        <header>
+          <h4>Notities</h4>
+          ${hidden}
+        </header>
+        <form data-action="add-note">
+          <label>
+            <span>Titel</span>
+            <input name="title" placeholder="Logboek regel" />
+          </label>
+          <label>
+            <span>Notitie</span>
+            <textarea name="content" rows="3" placeholder="Wat wil je onthouden?"></textarea>
+          </label>
+          <button type="submit">Notitie toevoegen</button>
+        </form>
+        <div class="entry-list">${entries || '<p class="muted">Nog geen notities.</p>'}</div>
+      </section>
+    `;
+  };
+
+  const renderFilesSection = (phase) => {
+    const hidden = state.preferences.showFiles ? '' : '<p class="muted">Bestanden zijn verborgen in de tijdbalk.</p>';
+    const entries = phase.files
+      .map(
+        (file) => `
+          <article class="entry-card" data-file-id="${file.id}">
+            <header>
+              <h4>${escapeHtml(file.name || 'Bestand')}</h4>
+              <time>${formatDate(file.createdAt) || ''}</time>
+            </header>
+            ${file.link ? `<p><a href="${escapeAttribute(file.link)}" target="_blank" rel="noopener">Open link</a></p>` : ''}
+            ${file.note ? `<p class="muted">${formatMultiline(file.note)}</p>` : ''}
+            <button type="button" data-action="remove-file">Verwijderen</button>
+          </article>
+        `
+      )
+      .join('');
+    return `
+      <section>
+        <header>
+          <h4>Bestanden &amp; referenties</h4>
+          ${hidden}
+        </header>
+        <form data-action="add-file">
+          <label>
+            <span>Naam</span>
+            <input name="name" placeholder="Render of schema" />
+          </label>
+          <label>
+            <span>Link (optioneel)</span>
+            <input name="link" type="url" placeholder="https://..." />
+          </label>
+          <label>
+            <span>Opmerking</span>
+            <textarea name="note" rows="2" placeholder="Waarom is dit bestand belangrijk?"></textarea>
+          </label>
+          <button type="submit">Bestand toevoegen</button>
+        </form>
+        <div class="entry-list">${entries || '<p class="muted">Nog geen bestanden.</p>'}</div>
+      </section>
+    `;
+  };
+
+  const renderChecklistSection = (phase) => {
+    const hidden = state.preferences.showChecklist
+      ? ''
+      : '<p class="muted">Checklist is verborgen in de tijdbalk.</p>';
+    const items = phase.checklist
+      .map(
+        (item) => `
+          <label class="checklist-item" data-checklist-id="${item.id}">
+            <input type="checkbox" ${item.done ? 'checked' : ''} />
+            <span>${escapeHtml(item.text)}</span>
+            <button type="button" data-action="remove-check">Verwijderen</button>
+          </label>
+        `
+      )
+      .join('');
+    return `
+      <section>
+        <header>
+          <h4>Checklist</h4>
+          ${hidden}
+        </header>
+        <form data-action="add-check">
+          <label>
+            <span>Stap</span>
+            <input name="text" placeholder="Controleer kabels" required />
+          </label>
+          <button type="submit">Stap toevoegen</button>
+        </form>
+        <div class="checklist">${items || '<p class="muted">Nog geen checklist.</p>'}</div>
+        ${phase.checklist.length ? '<button class="clear-button" data-action="clear-checklist">Checklist legen</button>' : ''}
+      </section>
+    `;
+  };
+
+  const render = () => {
+    applyTheme();
+    renderProjects();
+    const project = getSelectedProject();
+    if (!project) {
+      emptyState.hidden = false;
+      projectWorkspace.hidden = true;
+      return;
+    }
+    emptyState.hidden = true;
+    projectWorkspace.hidden = false;
+    projectTitle.textContent = project.name;
+    projectDescription.textContent = project.description || 'Voeg een korte beschrijving toe via het projectmenu.';
+
+    viewToggleInputs.forEach((input) => {
+      const pref = input.dataset.pref;
+      input.checked = !!state.preferences[pref];
+    });
+
+    renderTimeline(project);
+    renderPhaseDetail(project);
+  };
+
+  toggleProjectFormButton.addEventListener('click', () => {
+    const hidden = projectForm.hasAttribute('hidden');
+    if (hidden) {
+      projectForm.removeAttribute('hidden');
+      projectForm.elements.name?.focus();
+    } else {
+      projectForm.setAttribute('hidden', '');
     }
     if (!phase) {
       phaseDetailEl.innerHTML = `
@@ -658,6 +883,68 @@ const ready = async () => {
     saveAndRender();
   });
 
+  projectForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const formData = new FormData(projectForm);
+    const name = String(formData.get('name') || '').trim();
+    if (!name) return;
+    const project = {
+      id: uniqueId(),
+      name,
+      type: formData.get('type') === 'physical' ? 'physical' : 'digital',
+      description: String(formData.get('description') || '').trim(),
+      createdAt: new Date().toISOString(),
+      phases: [],
+    };
+    state.projects.push(project);
+    state.selectedProjectId = project.id;
+    state.selectedPhaseId = null;
+    projectForm.reset();
+    projectForm.setAttribute('hidden', '');
+    saveAndRender();
+  });
+
+  projectListEl.addEventListener('click', (event) => {
+    const item = event.target.closest('.project-item');
+    if (!item) return;
+    const projectId = item.dataset.projectId;
+    if (!projectId) return;
+    state.selectedProjectId = projectId;
+    state.selectedPhaseId = null;
+    saveAndRender();
+  });
+
+  addPhaseButton.addEventListener('click', () => {
+    const project = getSelectedProject();
+    if (!project) return;
+    const phase = createPhase(project.phases.length);
+    project.phases.push(phase);
+    state.selectedPhaseId = phase.id;
+    saveAndRender();
+  });
+
+  timelineEl.addEventListener('click', (event) => {
+    const card = event.target.closest('.timeline-card');
+    if (!card) return;
+    const phaseId = card.dataset.phaseId;
+    if (!phaseId) return;
+    state.selectedPhaseId = phaseId;
+    saveAndRender();
+  });
+
+  viewToggleInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      const pref = input.dataset.pref;
+      state.preferences[pref] = input.checked;
+      saveAndRender();
+    });
+  });
+
+  themeToggle.addEventListener('click', () => {
+    state.preferences.theme = state.preferences.theme === 'light' ? 'dark' : 'light';
+    saveAndRender();
+  });
+
   phaseDetailEl.addEventListener('input', (event) => {
     if (event.target.matches('input[type="range"][name="progress"]')) {
       const output = event.target.closest('.range-field')?.querySelector('output');
@@ -818,4 +1105,68 @@ document.addEventListener('DOMContentLoaded', () => {
   ready().catch((error) => {
     console.error('Kon de applicatie niet initialiseren.', error);
   });
-});
+
+  phaseDetailEl.addEventListener('change', (event) => {
+    const project = getSelectedProject();
+    const phase = getSelectedPhase();
+    if (!project || !phase) return;
+    if (event.target.matches('[data-checklist-id] input[type="checkbox"], .checklist-item input[type="checkbox"]')) {
+      const container = event.target.closest('[data-checklist-id]');
+      if (!container) return;
+      const id = container.dataset.checklistId;
+      const item = phase.checklist.find((entry) => entry.id === id);
+      if (!item) return;
+      item.done = event.target.checked;
+      saveAndRender();
+    }
+  });
+
+  const hydrateState = async () => {
+    const serverState = await fetchServerState();
+    if (serverState) {
+      state = normalizeStateShape(serverState);
+    } else {
+      state = normalizeStateShape(loadLocalState());
+    }
+    ensureSelections();
+    updateLocalCache();
+    render();
+  };
+
+  await hydrateState();
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  ready().catch((error) => {
+    console.error('Kon de applicatie niet initialiseren.', error);
+  });
+
+    if (event.target.matches('[data-action="clear-checklist"]')) {
+      const confirmClear = confirm('Checklist legen?');
+      if (!confirmClear) return;
+      phase.checklist = [];
+      saveAndRender();
+    }
+  });
+
+  phaseDetailEl.addEventListener('change', (event) => {
+    const project = getSelectedProject();
+    const phase = getSelectedPhase();
+    if (!project || !phase) return;
+    if (event.target.matches('[data-checklist-id] input[type="checkbox"], .checklist-item input[type="checkbox"]')) {
+      const container = event.target.closest('[data-checklist-id]');
+      if (!container) return;
+      const id = container.dataset.checklistId;
+      const item = phase.checklist.find((entry) => entry.id === id);
+      if (!item) return;
+      item.done = event.target.checked;
+      saveAndRender();
+    }
+  });
+
+  ensureSelections();
+  saveState();
+  render();
+};
+
+document.addEventListener('DOMContentLoaded', ready);
